@@ -131,6 +131,18 @@ func (l *Ledger) CreateTransfer(ctx context.Context, t core.Transfer) (core.Tran
 	}
 }
 
+func (l *Ledger) CreateAccount(ctx context.Context, acc core.Account) (core.Account, error) {
+	select {
+	case <-ctx.Done():
+		return core.Account{}, ctx.Err()
+	default:
+	}
+	if err := l.accounts.Create(acc); err != nil {
+		return core.Account{}, err
+	}
+	return acc, nil
+}
+
 func (l *Ledger) GetAccount(ctx context.Context, id [16]byte) (core.Account, error) {
 	select {
 	case <-ctx.Done():
