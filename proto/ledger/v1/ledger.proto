@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package ledger.v1;
+
+option go_package = "aequitas-ledger/proto/ledger/v1;ledgerv1";
+
+// Money represents 128-bit unsigned integer money amount using two uint64 fields.
+message Money {
+  uint64 lo = 1;
+  uint64 hi = 2;
+}
+
+message Account {
+  bytes id = 1;
+  string currency = 2;
+  Money posted_debits = 3;
+  Money posted_credits = 4;
+  Money pending_debits = 5;
+  Money pending_credits = 6;
+  Money balance = 7;
+}
+
+message Transfer {
+  bytes id = 1;
+  bytes debit_account_id = 2;
+  bytes credit_account_id = 3;
+  Money amount = 4;
+  bytes idempotency_key = 5;
+  int64 created_at = 6;
+}
+
+message CreateAccountRequest {
+  bytes id = 1;
+  string currency = 2;
+  Money initial_posted_credits = 3;
+}
+
+message CreateAccountResponse {
+  Account account = 1;
+}
+
+message GetAccountRequest {
+  bytes id = 1;
+}
+
+message GetAccountResponse {
+  Account account = 1;
+}
+
+message CreateTransferRequest {
+  bytes id = 1;
+  bytes debit_account_id = 2;
+  bytes credit_account_id = 3;
+  Money amount = 4;
+  bytes idempotency_key = 5;
+}
+
+message CreateTransferResponse {
+  Transfer transfer = 1;
+}
+
+service LedgerService {
+  rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
+  rpc CreateTransfer(CreateTransferRequest) returns (CreateTransferResponse);
+}
