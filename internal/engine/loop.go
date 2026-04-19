@@ -4,19 +4,42 @@ import (
 	"context"
 	"time"
 
+	"aequitas-ledger/internal/core"
 	"aequitas-ledger/internal/observability"
 	"aequitas-ledger/internal/wal"
 )
 
+type SnapshotRequest struct {
+	Result chan SnapshotView
+}
+
+type SnapshotView struct {
+	Accounts []core.Account
+	LSN      int64
+}
+
 type EventLoop struct {
-	batcher    *Batcher
-	accounts   *AccountManager
-	wal        *wal.WAL
-	currentLSN int64
+	batcher          *Batcher
+	accounts         *AccountManager
+	wal              *wal.WAL
+	currentLSN       int64
+	snapshotRequests chan SnapshotRequest
 }
 
 func NewEventLoop(b *Batcher, a *AccountManager, w *wal.WAL) *EventLoop {
-	return &EventLoop{batcher: b, accounts: a, wal: w}
+	return &EventLoop{
+		batcher:          b,
+		accounts:         a,
+		wal:              w,
+		snapshotRequests: make(chan SnapshotRequest, 10),
+	}
+}
+
+func (l *EventLoop) RequestSnapshotView() ([]core.Account, int64) {
+	req := SnapshotRequest{Result: make(chan SnapshotView, 1)}
+	l.snapshotRequests <- req
+	view := <-req.Result
+	return view.Accounts, view.LSN
 }
 
 func (l *EventLoop) Run(ctx context.Context) {
@@ -24,6 +47,9 @@ func (l *EventLoop) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case req := <-l.snapshotRequests:
+			accs := l.accounts.Snapshot()
+			req.Result <- SnapshotView{Accounts: accs, LSN: l.currentLSN}
 		default:
 		}
 
