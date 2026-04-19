@@ -59,6 +59,12 @@ func (rb *RingBuffer) DrainBatch(max int) []TransferEvent {
 		return nil
 	}
 
+	// Size the batch to what is actually pending, not max: with a 10k
+	// maxBatchSize a batch-of-one would otherwise preallocate ~1.2 MB.
+	pending := head - rb.tail
+	if uint64(max) > pending {
+		max = int(pending)
+	}
 	out := make([]TransferEvent, 0, max)
 	for len(out) < max && rb.tail < head {
 		idx := rb.tail & rb.mask

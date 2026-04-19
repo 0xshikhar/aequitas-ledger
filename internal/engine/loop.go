@@ -33,6 +33,7 @@ func NewEventLoop(b *Batcher, a *AccountManager, w *wal.WAL) *EventLoop {
 		batcher:            b,
 		accounts:           a,
 		wal:                w,
+		currentLSN:         w.CurrentLSN(),
 		snapshotRequests:   make(chan SnapshotRequest, 10),
 		readQueue:          make(chan ReadAccountEvent, 1024),
 		accountCreateQueue: make(chan AccountCreateEvent, 256),
@@ -51,6 +52,32 @@ func (l *EventLoop) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		default:
+		}
+
+		l.drainControl()
+		batch := l.batcher.Collect(l.controlPending)
+		l.drainControl()
+
+		if len(batch) == 0 {
+			continue
+		}
+		l.processBatch(batch)
+	}
+}
+
+// controlPending reports whether read, account-create, or snapshot requests
+// are queued. The batcher consults it while waiting so the loop can service
+// control work instead of spinning for a fuller batch (C0.16).
+func (l *EventLoop) controlPending() bool {
+	return len(l.readQueue) > 0 || len(l.accountCreateQueue) > 0 || len(l.snapshotRequests) > 0
+}
+
+// drainControl services every currently queued control request so read and
+// create latency stays bounded no matter how heavy the transfer load is.
+func (l *EventLoop) drainControl() {
+	for {
+		select {
 		case req := <-l.snapshotRequests:
 			accs := l.accounts.Snapshot()
 			req.Result <- SnapshotView{Accounts: accs, LSN: l.currentLSN}
@@ -64,13 +91,8 @@ func (l *EventLoop) Run(ctx context.Context) {
 		case req := <-l.accountCreateQueue:
 			l.processAccountCreate(req)
 		default:
+			return
 		}
-
-		batch := l.batcher.Collect()
-		if len(batch) == 0 {
-			continue
-		}
-		l.processBatch(batch)
 	}
 }
 
