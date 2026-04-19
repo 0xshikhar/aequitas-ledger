@@ -2,9 +2,11 @@ package wal
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,6 +106,36 @@ func (w *WAL) Close() error {
 		return nil
 	}
 	return w.current.Close()
+}
+
+func (w *WAL) AppendCheckpoint(lsn int64) error {
+	var payload [8]byte
+	binary.BigEndian.PutUint64(payload[:], uint64(lsn))
+	rec := Record{
+		Type:    RecordTypeCheckpoint,
+		Payload: payload[:],
+	}
+	_, err := w.AppendBatch([]Record{rec})
+	if err != nil {
+		return err
+	}
+	return w.Sync()
+}
+
+func (w *WAL) TruncateBefore(lsn int64) error {
+	ids, err := listSegmentIDs(w.dir)
+	if err != nil {
+		return err
+	}
+
+	for _, id := range ids {
+		if id >= w.currentID {
+			continue // Do not delete active current segment
+		}
+		path := filepath.Join(w.dir, fmt.Sprintf("wal-%06d.seg", id))
+		_ = os.Remove(path)
+	}
+	return nil
 }
 
 func (w *WAL) Rotate() error {

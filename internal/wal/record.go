@@ -21,8 +21,9 @@ var (
 type RecordType uint8
 
 const (
-	RecordTypeTransfer RecordType = 1
-	RecordTypeAccount  RecordType = 2
+	RecordTypeTransfer   RecordType = 1
+	RecordTypeAccount    RecordType = 2
+	RecordTypeCheckpoint RecordType = 3
 )
 
 type Record struct {
