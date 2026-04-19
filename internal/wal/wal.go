@@ -131,6 +131,15 @@ func (w *WAL) CurrentLSN() int64 {
 	return w.currentLSN
 }
 
+// AdvanceLSNTo raises the in-memory LSN watermark when recovery state (e.g. a
+// loaded snapshot) proves the WAL head is behind it, so new records never reuse
+// LSNs at or below an already-persisted snapshot.
+func (w *WAL) AdvanceLSNTo(atLeast int64) {
+	if atLeast > w.currentLSN {
+		w.currentLSN = atLeast
+	}
+}
+
 func (w *WAL) Close() error {
 	if w.current == nil {
 		return nil
@@ -164,13 +173,32 @@ func (w *WAL) TruncateBefore(lsn int64) error {
 		}
 		path := filepath.Join(w.dir, fmt.Sprintf("wal-%06d.seg", id))
 		maxLSN, err := peekSegmentMaxLSN(path)
-		if err != nil || maxLSN < lsn {
+		if err != nil {
+			continue // cannot prove the segment is below lsn; never delete blindly
+		}
+		if maxLSN < lsn {
 			_ = os.Remove(path)
 		}
 	}
 	return nil
 }
 
+const (
+	// peekTailChunk bounds how much of a segment's tail peekSegmentMaxLSN reads.
+	// The last record's frame starts within this window for any realistic record.
+	peekTailChunk = 64 << 10
+	// peekResyncBound bounds how far into the tail chunk the frame-chain resync
+	// scans before settling for the furthest chain found.
+	peekResyncBound = 4 << 10
+	// peekMaxPayload bounds payload length while frame-walking the tail.
+	peekMaxPayload = 1 << 20
+)
+
+// peekSegmentMaxLSN returns the LSN of the last structurally valid record in a
+// segment by reading only its tail. TruncateBefore uses it to decide whether a
+// segment lies entirely below a snapshot LSN; recovery remains the authority on
+// integrity, so frames are walked structurally (no per-record CRC), matching
+// the previous full-scan semantics at O(tail) cost instead of O(segment).
 func peekSegmentMaxLSN(path string) (int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -182,30 +210,58 @@ func peekSegmentMaxLSN(path string) (int64, error) {
 	if err != nil || stat.Size() < int64(RecordHeaderSize+RecordCRCSize) {
 		return 0, err
 	}
+	size := stat.Size()
 
-	// Read last record header if possible, or scan
-	buf := make([]byte, stat.Size())
-	if _, err := io.ReadFull(f, buf); err != nil {
+	chunk := int64(peekTailChunk)
+	if chunk > size {
+		chunk = size
+	}
+	buf := make([]byte, chunk)
+	if _, err := f.ReadAt(buf, size-chunk); err != nil && err != io.EOF {
 		return 0, err
 	}
 
-	var maxLSN int64
-	offset := int64(0)
-	size := stat.Size()
-	for offset < size {
-		if size-offset < int64(RecordHeaderSize+RecordCRCSize) {
-			break
+	// Frames are back-to-back and the last one ends at EOF, but the chunk
+	// usually starts mid-frame: resync by finding the earliest offset from
+	// which a chain of structurally valid frames walks furthest toward EOF.
+	bestEnd, bestLSN := 0, int64(0)
+	limit := min(len(buf), peekResyncBound)
+	for start := 0; start < limit; start++ {
+		end, lsn := walkFrameChain(buf[start:])
+		if end > bestEnd {
+			bestEnd, bestLSN = end, lsn
 		}
-		lsn := int64(binary.BigEndian.Uint64(buf[offset : offset+8]))
-		payloadLen := int64(binary.BigEndian.Uint32(buf[offset+9 : offset+13]))
-		recLen := int64(RecordHeaderSize) + payloadLen + int64(RecordCRCSize)
-		if payloadLen < 0 || recLen <= 0 || offset+recLen > size {
-			break
+		if end == len(buf)-start {
+			break // chain reaches EOF; this is the last record's LSN
 		}
-		maxLSN = lsn
-		offset += recLen
 	}
-	return maxLSN, nil
+	return bestLSN, nil
+}
+
+// walkFrameChain walks structurally valid [LSN|type|len|payload|crc] frames and
+// returns the bytes covered and the LSN of the last complete frame.
+func walkFrameChain(b []byte) (int, int64) {
+	off, lastLSN := 0, int64(0)
+	for off+RecordHeaderSize+RecordCRCSize <= len(b) {
+		payloadLen := int64(binary.BigEndian.Uint32(b[off+9 : off+13]))
+		if payloadLen > peekMaxPayload {
+			break
+		}
+		recLen := int64(RecordHeaderSize) + payloadLen + int64(RecordCRCSize)
+		if off+int(recLen) > len(b) {
+			break
+		}
+		if RecordType(b[off+8]) == 0 {
+			break // invalid record type
+		}
+		lsn := int64(binary.BigEndian.Uint64(b[off : off+8]))
+		if lsn <= 0 {
+			break // LSNs are assigned from 1
+		}
+		lastLSN = lsn
+		off += int(recLen)
+	}
+	return off, lastLSN
 }
 
 func (w *WAL) Rotate() error {
@@ -238,7 +294,7 @@ func (w *WAL) RecoverFromLSN(fromLSN int64, handler func(Record) error) error {
 		}
 		return handler(r)
 	}
-	recovered, lastSegmentID, err := recoverSegments(w.dir, filterHandler)
+	recovered, lastSegmentID, err := recoverSegments(w.dir, fromLSN, filterHandler)
 	if err != nil {
 		return err
 	}

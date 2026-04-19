@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-func recoverSegments(dir string, handler func(Record) error) (recoveredLSN int64, lastSegmentID int, err error) {
+func recoverSegments(dir string, fromLSN int64, handler func(Record) error) (recoveredLSN int64, lastSegmentID int, err error) {
 	ids, err := listSegmentIDs(dir)
 	if err != nil {
 		return 0, 0, err
@@ -20,6 +20,17 @@ func recoverSegments(dir string, handler func(Record) error) (recoveredLSN int64
 	for idx, id := range ids {
 		path := segmentPath(dir, id)
 		lastSegmentID = id
+
+		// A loaded snapshot covers every record at or below fromLSN, so a
+		// segment whose max LSN is <= fromLSN cannot contribute to the delta
+		// replay. Only the newest segment can carry a torn tail (any earlier
+		// crash tail was truncated by a previous recovery), so earlier segments
+		// are safe to skip reading entirely.
+		if fromLSN > 0 && idx < len(ids)-1 {
+			if maxLSN, perr := peekSegmentMaxLSN(path); perr == nil && maxLSN <= fromLSN {
+				continue
+			}
+		}
 
 		f, err := os.OpenFile(path, os.O_RDWR, 0)
 		if err != nil {

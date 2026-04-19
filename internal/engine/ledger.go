@@ -101,6 +101,12 @@ func NewLedger(cfg Config, w *wal.WAL) (*Ledger, error) {
 	if err := l.RecoverFromSnapshot(snapshotLSN); err != nil {
 		return nil, err
 	}
+	// The snapshot is authoritative up to its LSN: even when the surviving WAL
+	// is shorter (e.g. segments lost after the snapshot was persisted), new
+	// records must never reuse LSNs at or below it.
+	if snapshotLSN > 0 {
+		l.wal.AdvanceLSNTo(snapshotLSN)
+	}
 
 	batcher := NewBatcher(l.rb, cfg.MaxBatchSize, cfg.BatchTimeout)
 	l.loop = NewEventLoop(batcher, l.accounts, l.wal)
@@ -154,11 +160,13 @@ func (l *Ledger) CreateTransfer(ctx context.Context, t core.Transfer) (core.Tran
 	ev := NewTransferEvent(t)
 	if err := l.rb.Submit(ev); err != nil {
 		l.idempKey.Rollback(key)
+		ReleaseErrorResult(ev.Result) // never queued; the loop cannot send on it
 		return core.Transfer{}, err
 	}
 
 	select {
 	case err := <-ev.Result:
+		ReleaseErrorResult(ev.Result) // drained; safe to recycle
 		if err != nil {
 			l.idempKey.Rollback(key)
 			return core.Transfer{}, err
@@ -167,6 +175,8 @@ func (l *Ledger) CreateTransfer(ctx context.Context, t core.Transfer) (core.Tran
 		return ev.Transfer, nil
 	case <-ctx.Done():
 		l.idempKey.Rollback(key)
+		// Abandoned mid-flight: the loop may still deliver a result, so the
+		// channel must not be recycled.
 		return core.Transfer{}, ctx.Err()
 	}
 }
@@ -175,40 +185,48 @@ func (l *Ledger) CreateAccount(ctx context.Context, acc core.Account) (core.Acco
 	if l.isFollower {
 		return core.Account{}, core.ErrNotLeader{}
 	}
-	resChan := make(chan error, 1)
+	resChan := AcquireErrorResult()
 	ev := AccountCreateEvent{Account: acc, Result: resChan}
 
 	select {
 	case l.loop.accountCreateQueue <- ev:
 	case <-ctx.Done():
+		ReleaseErrorResult(resChan) // never queued
 		return core.Account{}, ctx.Err()
 	}
 
 	select {
 	case err := <-resChan:
+		ReleaseErrorResult(resChan) // drained; safe to recycle
 		if err != nil {
 			return core.Account{}, err
 		}
 		return acc, nil
 	case <-ctx.Done():
+		// Abandoned mid-flight: the loop may still deliver a result, so the
+		// channel must not be recycled.
 		return core.Account{}, ctx.Err()
 	}
 }
 
 func (l *Ledger) GetAccount(ctx context.Context, id [16]byte) (core.Account, error) {
-	resChan := make(chan ReadAccountResult, 1)
+	resChan := AcquireReadResult()
 	ev := ReadAccountEvent{ID: id, Result: resChan}
 
 	select {
 	case l.loop.readQueue <- ev:
 	case <-ctx.Done():
+		ReleaseReadResult(resChan) // never queued
 		return core.Account{}, ctx.Err()
 	}
 
 	select {
 	case res := <-resChan:
+		ReleaseReadResult(resChan) // drained; safe to recycle
 		return res.Account, res.Err
 	case <-ctx.Done():
+		// Abandoned mid-flight: the loop may still deliver a result, so the
+		// channel must not be recycled.
 		return core.Account{}, ctx.Err()
 	}
 }
