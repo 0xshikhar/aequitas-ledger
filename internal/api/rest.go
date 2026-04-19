@@ -95,6 +95,10 @@ func (s *RESTServer) handleAccounts(w http.ResponseWriter, r *http.Request) {
 
 	created, err := s.ledger.CreateAccount(r.Context(), acc)
 	if err != nil {
+		if errors.Is(err, core.ErrNotLeader{}) {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
 		var dup core.ErrDuplicateAccountID
 		if errors.As(err, &dup) {
 			writeError(w, http.StatusConflict, "account already exists")
@@ -211,6 +215,10 @@ func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request
 
 	res, err := s.ledger.CreateTransfer(r.Context(), tr)
 	if err != nil {
+		if errors.Is(err, core.ErrNotLeader{}) {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
 		if errors.Is(err, core.ErrZeroAmount{}) || errors.Is(err, core.ErrSelfTransfer{}) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -241,14 +249,14 @@ func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request
 func parseHexID(s string) ([16]byte, error) {
 	var id [16]byte
 	s = strings.TrimPrefix(s, "0x")
-	bytes, err := hex.DecodeString(s)
+	b, err := hex.DecodeString(s)
 	if err != nil {
 		return id, err
 	}
-	if len(bytes) > 16 {
-		return id, errors.New("id exceeds 16 bytes")
+	if len(b) != 16 {
+		return id, errors.New("id must be exactly 16 bytes (32 hex chars)")
 	}
-	copy(id[16-len(bytes):], bytes)
+	copy(id[:], b)
 	return id, nil
 }
 

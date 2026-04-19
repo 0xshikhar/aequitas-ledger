@@ -164,10 +164,10 @@ func bytesToID(b []byte) ([16]byte, error) {
 	if len(b) == 0 {
 		return id, errors.New("empty id")
 	}
-	if len(b) > 16 {
-		return id, errors.New("id exceeds 16 bytes")
+	if len(b) != 16 {
+		return id, errors.New("id must be exactly 16 bytes")
 	}
-	copy(id[16-len(b):], b)
+	copy(id[:], b)
 	return id, nil
 }
 
