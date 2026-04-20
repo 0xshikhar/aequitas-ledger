@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -33,6 +34,10 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "50051"
+	}
+	restPort := os.Getenv("REST_PORT")
+	if restPort == "" {
+		restPort = "8080"
 	}
 	metricsPort := os.Getenv("METRICS_PORT")
 	if metricsPort == "" {
@@ -74,6 +79,21 @@ func main() {
 		}
 	}()
 
+	// Start REST API HTTP Gateway
+	restServer := api.NewRESTServer(ledger)
+	httpServer := &http.Server{
+		Addr:         ":" + restPort,
+		Handler:      restServer,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+	go func() {
+		logger.Info("Starting REST API HTTP Gateway", "port", restPort)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("REST HTTP server error", "error", err)
+		}
+	}()
+
 	// Start gRPC server
 	lis, err := net.Listen("tcp", ":"+port)
 	if err != nil {
@@ -105,6 +125,7 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	_ = httpServer.Shutdown(shutdownCtx)
 	_ = obsServer.Shutdown(shutdownCtx)
 
 	if err := ledger.Close(); err != nil {
