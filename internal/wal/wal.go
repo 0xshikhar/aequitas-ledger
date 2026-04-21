@@ -161,6 +161,12 @@ func (w *WAL) AppendCheckpoint(lsn int64) error {
 	return w.Sync()
 }
 
+// TruncateBefore deletes every non-active segment whose max LSN is below lsn.
+// The caller asserts all records at or below lsn are durably persisted
+// elsewhere (a snapshot), so lsn must be a committed-batch boundary LSN:
+// cutting through a batch would orphan its records on either side of a
+// segment boundary. Segments whose max LSN cannot be determined are never
+// deleted.
 func (w *WAL) TruncateBefore(lsn int64) error {
 	ids, err := listSegmentIDs(w.dir)
 	if err != nil {
@@ -228,8 +234,8 @@ func peekSegmentMaxLSN(path string) (int64, error) {
 	limit := min(len(buf), peekResyncBound)
 	for start := 0; start < limit; start++ {
 		end, lsn := walkFrameChain(buf[start:])
-		if end > bestEnd {
-			bestEnd, bestLSN = end, lsn
+		if start+end > bestEnd {
+			bestEnd, bestLSN = start+end, lsn
 		}
 		if end == len(buf)-start {
 			break // chain reaches EOF; this is the last record's LSN
@@ -297,6 +303,13 @@ func (w *WAL) RecoverFromLSN(fromLSN int64, handler func(Record) error) error {
 	recovered, lastSegmentID, err := recoverSegments(w.dir, fromLSN, filterHandler)
 	if err != nil {
 		return err
+	}
+	// The caller asserts state is already applied through fromLSN (e.g. a
+	// loaded snapshot), so the recovered watermark can never be below it —
+	// even when every segment was peek-skipped or the surviving WAL is
+	// shorter than the snapshot's history.
+	if recovered < fromLSN {
+		recovered = fromLSN
 	}
 	if recovered > w.currentLSN {
 		w.currentLSN = recovered
