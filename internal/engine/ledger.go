@@ -123,6 +123,12 @@ func (l *Ledger) IsFollower() bool {
 	return l.isFollower
 }
 
+// CurrentLSN exposes the WAL head watermark: the LSN through which in-memory
+// state is known to be applied (snapshot and/or replayed records).
+func (l *Ledger) CurrentLSN() int64 {
+	return l.wal.CurrentLSN()
+}
+
 func (l *Ledger) Close() error {
 	if l.cancel != nil {
 		l.cancel()
@@ -135,31 +141,59 @@ func (l *Ledger) CreateTransfer(ctx context.Context, t core.Transfer) (core.Tran
 	if l.isFollower {
 		return core.Transfer{}, core.ErrNotLeader{}
 	}
-	key := t.IdempotencyKey
-	for {
-		existing, found, err := l.idempKey.CheckAndReserve(key)
-		if err != nil {
-			var conflict core.ErrIdempotencyConflict
-			if errors.As(err, &conflict) {
-				select {
-				case <-ctx.Done():
-					return core.Transfer{}, ctx.Err()
-				default:
-					runtime.Gosched()
-					continue
+	// A zero idempotency key means the caller opted out of deduplication —
+	// matching the recovery path, which only rebuilds keys for non-zero-key
+	// transfers. Deduping the zero key would collapse distinct keyless
+	// transfers into the first one's result.
+	if t.IdempotencyKey != [32]byte{} {
+		key := t.IdempotencyKey
+		for {
+			existing, found, err := l.idempKey.CheckAndReserve(key)
+			if err != nil {
+				var conflict core.ErrIdempotencyConflict
+				if errors.As(err, &conflict) {
+					select {
+					case <-ctx.Done():
+						return core.Transfer{}, ctx.Err()
+					default:
+						runtime.Gosched()
+						continue
+					}
 				}
+				return core.Transfer{}, err
 			}
+			if found {
+				return existing, nil
+			}
+			break
+		}
+
+		ev := NewTransferEvent(t)
+		if err := l.rb.Submit(ev); err != nil {
+			l.idempKey.Rollback(key)
+			ReleaseErrorResult(ev.Result) // never queued; the loop cannot send on it
 			return core.Transfer{}, err
 		}
-		if found {
-			return existing, nil
+
+		select {
+		case err := <-ev.Result:
+			ReleaseErrorResult(ev.Result) // drained; safe to recycle
+			if err != nil {
+				l.idempKey.Rollback(key)
+				return core.Transfer{}, err
+			}
+			l.idempKey.Commit(key, ev.Transfer)
+			return ev.Transfer, nil
+		case <-ctx.Done():
+			l.idempKey.Rollback(key)
+			// Abandoned mid-flight: the loop may still deliver a result, so the
+			// channel must not be recycled.
+			return core.Transfer{}, ctx.Err()
 		}
-		break
 	}
 
 	ev := NewTransferEvent(t)
 	if err := l.rb.Submit(ev); err != nil {
-		l.idempKey.Rollback(key)
 		ReleaseErrorResult(ev.Result) // never queued; the loop cannot send on it
 		return core.Transfer{}, err
 	}
@@ -167,14 +201,8 @@ func (l *Ledger) CreateTransfer(ctx context.Context, t core.Transfer) (core.Tran
 	select {
 	case err := <-ev.Result:
 		ReleaseErrorResult(ev.Result) // drained; safe to recycle
-		if err != nil {
-			l.idempKey.Rollback(key)
-			return core.Transfer{}, err
-		}
-		l.idempKey.Commit(key, ev.Transfer)
-		return ev.Transfer, nil
+		return ev.Transfer, err
 	case <-ctx.Done():
-		l.idempKey.Rollback(key)
 		// Abandoned mid-flight: the loop may still deliver a result, so the
 		// channel must not be recycled.
 		return core.Transfer{}, ctx.Err()

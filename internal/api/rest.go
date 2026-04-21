@@ -201,7 +201,10 @@ func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request
 	}
 
 	var key [32]byte
-	if len(idempHeader) > 0 {
+	if idempHeader != "" {
+		// Absent key stays zero: the engine treats a zero key as "no
+		// idempotency check". Hashing the empty string would collapse all
+		// keyless transfers onto one fixed key.
 		key = sha256.Sum256([]byte(idempHeader))
 	}
 
