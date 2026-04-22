@@ -19,8 +19,8 @@ var (
 	readResultPool = sync.Pool{New: func() any { return make(chan ReadAccountResult, 1) }}
 )
 
-func AcquireErrorResult() chan error         { return errResultPool.Get().(chan error) }
-func ReleaseErrorResult(ch chan error)       { errResultPool.Put(ch) }
+func AcquireErrorResult() chan error   { return errResultPool.Get().(chan error) }
+func ReleaseErrorResult(ch chan error) { errResultPool.Put(ch) }
 func AcquireReadResult() chan ReadAccountResult {
 	return readResultPool.Get().(chan ReadAccountResult)
 }
