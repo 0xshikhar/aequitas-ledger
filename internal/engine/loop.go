@@ -51,6 +51,7 @@ func (l *EventLoop) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			l.abandonPending()
 			return
 		default:
 		}
@@ -63,6 +64,34 @@ func (l *EventLoop) Run(ctx context.Context) {
 			continue
 		}
 		l.processBatch(batch)
+	}
+}
+
+// abandonPending completes every still-queued transfer event with
+// ErrLedgerClosed on shutdown, so submitters waiting on a batch completion
+// observe an error instead of hanging forever. Queued account-create batches
+// are completed the same way.
+func (l *EventLoop) abandonPending() {
+	for {
+		batch := l.batcher.Collect(nil)
+		if len(batch) == 0 {
+			break
+		}
+		for i := range batch {
+			observability.TransfersTotal.WithLabelValues("ledger_closed").Inc()
+			batch[i].complete(TransferAck{Err: core.ErrLedgerClosed{}})
+		}
+	}
+	for {
+		select {
+		case req := <-l.accountCreateQueue:
+			for i := range req.Results {
+				req.Results[i] = core.ErrLedgerClosed{}
+			}
+			close(req.Done)
+		default:
+			return
+		}
 	}
 }
 
@@ -96,25 +125,45 @@ func (l *EventLoop) drainControl() {
 	}
 }
 
+// processAccountCreate applies one client batch of account creations: one
+// WAL append + one sync for the whole batch, positional results, a single
+// completion notification via req.Done.
 func (l *EventLoop) processAccountCreate(req AccountCreateEvent) {
-	if _, err := l.accounts.Get(req.Account.ID); err == nil {
-		req.Result <- core.ErrDuplicateAccountID{AccountID: req.Account.ID}
+	// Duplicates never enter the WAL batch; they fail per-item.
+	var recs []wal.Record
+	var walIdx []int
+	for i := range req.Accounts {
+		if _, err := l.accounts.Get(req.Accounts[i].ID); err == nil {
+			req.Results[i] = core.ErrDuplicateAccountID{AccountID: req.Accounts[i].ID}
+			continue
+		}
+		recs = append(recs, wal.Record{Type: wal.RecordTypeAccount, Payload: EncodeAccountPayload(req.Accounts[i])})
+		walIdx = append(walIdx, i)
+	}
+	if len(recs) == 0 {
+		close(req.Done)
 		return
 	}
 
-	payload := EncodeAccountPayload(req.Account)
-	rec := wal.Record{Type: wal.RecordTypeAccount, Payload: payload}
-	if _, err := l.wal.AppendBatch([]wal.Record{rec}); err != nil {
-		req.Result <- err
+	if _, err := l.wal.AppendBatch(recs); err != nil {
+		for _, i := range walIdx {
+			req.Results[i] = err
+		}
+		close(req.Done)
 		return
 	}
 	if err := l.wal.Sync(); err != nil {
-		req.Result <- err
+		for _, i := range walIdx {
+			req.Results[i] = err
+		}
+		close(req.Done)
 		return
 	}
 	l.currentLSN = l.wal.CurrentLSN()
-	err := l.accounts.Create(req.Account)
-	req.Result <- err
+	for _, i := range walIdx {
+		req.Results[i] = l.accounts.Create(req.Accounts[i])
+	}
+	close(req.Done)
 }
 
 func (l *EventLoop) processBatch(events []TransferEvent) {
@@ -129,7 +178,7 @@ func (l *EventLoop) processBatch(events []TransferEvent) {
 		if _, err := l.wal.AppendBatch(records); err != nil {
 			for i := range events {
 				observability.TransfersTotal.WithLabelValues("wal_append_error").Inc()
-				events[i].Result <- err
+				events[i].complete(TransferAck{Err: err})
 			}
 			return
 		}
@@ -138,7 +187,7 @@ func (l *EventLoop) processBatch(events []TransferEvent) {
 			observability.WALSyncDuration.Observe(time.Since(syncStart).Seconds())
 			for i := range events {
 				observability.TransfersTotal.WithLabelValues("wal_sync_error").Inc()
-				events[i].Result <- err
+				events[i].complete(TransferAck{Err: err})
 			}
 			return
 		}
@@ -153,7 +202,10 @@ func (l *EventLoop) processBatch(events []TransferEvent) {
 		} else {
 			observability.TransfersTotal.WithLabelValues("success").Inc()
 		}
-		events[i].Result <- outcomes[i]
+		// The ack carries the loop's copy of the transfer — for successful
+		// items it includes the server-assigned timestamp written by
+		// makeWALRecords.
+		events[i].complete(TransferAck{Transfer: events[i].Transfer, Err: outcomes[i]})
 	}
 	observability.TransferDuration.Observe(time.Since(start).Seconds())
 }
