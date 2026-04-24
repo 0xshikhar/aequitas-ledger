@@ -129,11 +129,11 @@ func minRecordLSN(records []Record) int64 {
 // replaySegment sequentially replays one segment's records into st. Batch
 // state (st.pending) may be carried in from, and left dangling at the end of,
 // this segment when a batch straddles the rotation boundary. Returns:
-// - stop=true when a truncated/corrupted frame makes the rest of the segment
-//   (and later segments) untrustworthy; committedOffset then points just past
-//   the last committed record
-// - committedOffset: offset just past the last committed record in this
-//   segment (== size when the segment ends on a commit boundary)
+//   - stop=true when a truncated/corrupted frame makes the rest of the segment
+//     (and later segments) untrustworthy; committedOffset then points just past
+//     the last committed record
+//   - committedOffset: offset just past the last committed record in this
+//     segment (== size when the segment ends on a commit boundary)
 func replaySegment(f *os.File, handler func(Record) error, st *replayState) (stop bool, committedOffset int64, err error) {
 	stat, err := f.Stat()
 	if err != nil {
