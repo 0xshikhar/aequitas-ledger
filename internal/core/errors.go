@@ -80,3 +80,16 @@ func (e ErrDuplicateTransferID) Error() string {
 type ErrNotLeader struct{}
 
 func (ErrNotLeader) Error() string { return "node is running as a read-only follower (not leader)" }
+
+type ErrLedgerClosed struct{}
+
+func (ErrLedgerClosed) Error() string { return "ledger is shutting down; batch was not applied" }
+
+type ErrBatchTooLarge struct {
+	Got int
+	Max int
+}
+
+func (e ErrBatchTooLarge) Error() string {
+	return fmt.Sprintf("batch too large: %d items exceeds maximum of %d", e.Got, e.Max)
+}
