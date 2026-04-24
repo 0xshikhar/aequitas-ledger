@@ -562,6 +562,309 @@ func (x *CreateTransferResponse) GetTransfer() *Transfer {
 	return nil
 }
 
+// Batched API (D1.1): one RPC submits up to 8192 items and returns one
+// positional result per item, mirroring TigerBeetle's batch protocol.
+type TransferResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Ok    bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	// transfer is set when ok is true: the committed transfer.
+	Transfer *Transfer `protobuf:"bytes,2,opt,name=transfer,proto3" json:"transfer,omitempty"`
+	// error is set when ok is false: a human-readable per-item failure reason
+	// (e.g. insufficient funds, unknown account).
+	Error         string `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransferResult) Reset() {
+	*x = TransferResult{}
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransferResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransferResult) ProtoMessage() {}
+
+func (x *TransferResult) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransferResult.ProtoReflect.Descriptor instead.
+func (*TransferResult) Descriptor() ([]byte, []int) {
+	return file_proto_ledger_v1_ledger_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *TransferResult) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *TransferResult) GetTransfer() *Transfer {
+	if x != nil {
+		return x.Transfer
+	}
+	return nil
+}
+
+func (x *TransferResult) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type CreateTransfersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Transfers     []*Transfer            `protobuf:"bytes,1,rep,name=transfers,proto3" json:"transfers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateTransfersRequest) Reset() {
+	*x = CreateTransfersRequest{}
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateTransfersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateTransfersRequest) ProtoMessage() {}
+
+func (x *CreateTransfersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateTransfersRequest.ProtoReflect.Descriptor instead.
+func (*CreateTransfersRequest) Descriptor() ([]byte, []int) {
+	return file_proto_ledger_v1_ledger_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *CreateTransfersRequest) GetTransfers() []*Transfer {
+	if x != nil {
+		return x.Transfers
+	}
+	return nil
+}
+
+type CreateTransfersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Results       []*TransferResult      `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateTransfersResponse) Reset() {
+	*x = CreateTransfersResponse{}
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateTransfersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateTransfersResponse) ProtoMessage() {}
+
+func (x *CreateTransfersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateTransfersResponse.ProtoReflect.Descriptor instead.
+func (*CreateTransfersResponse) Descriptor() ([]byte, []int) {
+	return file_proto_ledger_v1_ledger_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *CreateTransfersResponse) GetResults() []*TransferResult {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+type AccountResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Ok    bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	// account is set when ok is true: the created account.
+	Account *Account `protobuf:"bytes,2,opt,name=account,proto3" json:"account,omitempty"`
+	// error is set when ok is false.
+	Error         string `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AccountResult) Reset() {
+	*x = AccountResult{}
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AccountResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AccountResult) ProtoMessage() {}
+
+func (x *AccountResult) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AccountResult.ProtoReflect.Descriptor instead.
+func (*AccountResult) Descriptor() ([]byte, []int) {
+	return file_proto_ledger_v1_ledger_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *AccountResult) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *AccountResult) GetAccount() *Account {
+	if x != nil {
+		return x.Account
+	}
+	return nil
+}
+
+func (x *AccountResult) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type CreateAccountsRequest struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Accounts      []*CreateAccountRequest `protobuf:"bytes,1,rep,name=accounts,proto3" json:"accounts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateAccountsRequest) Reset() {
+	*x = CreateAccountsRequest{}
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateAccountsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateAccountsRequest) ProtoMessage() {}
+
+func (x *CreateAccountsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateAccountsRequest.ProtoReflect.Descriptor instead.
+func (*CreateAccountsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_ledger_v1_ledger_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CreateAccountsRequest) GetAccounts() []*CreateAccountRequest {
+	if x != nil {
+		return x.Accounts
+	}
+	return nil
+}
+
+type CreateAccountsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Results       []*AccountResult       `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateAccountsResponse) Reset() {
+	*x = CreateAccountsResponse{}
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateAccountsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateAccountsResponse) ProtoMessage() {}
+
+func (x *CreateAccountsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateAccountsResponse.ProtoReflect.Descriptor instead.
+func (*CreateAccountsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_ledger_v1_ledger_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CreateAccountsResponse) GetResults() []*AccountResult {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
 var File_proto_ledger_v1_ledger_proto protoreflect.FileDescriptor
 
 const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
@@ -603,12 +906,30 @@ const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
 	"\x06amount\x18\x04 \x01(\v2\x10.ledger.v1.MoneyR\x06amount\x12'\n" +
 	"\x0fidempotency_key\x18\x05 \x01(\fR\x0eidempotencyKey\"I\n" +
 	"\x16CreateTransferResponse\x12/\n" +
-	"\btransfer\x18\x01 \x01(\v2\x13.ledger.v1.TransferR\btransfer2\x85\x02\n" +
+	"\btransfer\x18\x01 \x01(\v2\x13.ledger.v1.TransferR\btransfer\"g\n" +
+	"\x0eTransferResult\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12/\n" +
+	"\btransfer\x18\x02 \x01(\v2\x13.ledger.v1.TransferR\btransfer\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"K\n" +
+	"\x16CreateTransfersRequest\x121\n" +
+	"\ttransfers\x18\x01 \x03(\v2\x13.ledger.v1.TransferR\ttransfers\"N\n" +
+	"\x17CreateTransfersResponse\x123\n" +
+	"\aresults\x18\x01 \x03(\v2\x19.ledger.v1.TransferResultR\aresults\"c\n" +
+	"\rAccountResult\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12,\n" +
+	"\aaccount\x18\x02 \x01(\v2\x12.ledger.v1.AccountR\aaccount\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"T\n" +
+	"\x15CreateAccountsRequest\x12;\n" +
+	"\baccounts\x18\x01 \x03(\v2\x1f.ledger.v1.CreateAccountRequestR\baccounts\"L\n" +
+	"\x16CreateAccountsResponse\x122\n" +
+	"\aresults\x18\x01 \x03(\v2\x18.ledger.v1.AccountResultR\aresults2\xb6\x03\n" +
 	"\rLedgerService\x12R\n" +
-	"\rCreateAccount\x12\x1f.ledger.v1.CreateAccountRequest\x1a .ledger.v1.CreateAccountResponse\x12I\n" +
+	"\rCreateAccount\x12\x1f.ledger.v1.CreateAccountRequest\x1a .ledger.v1.CreateAccountResponse\x12U\n" +
+	"\x0eCreateAccounts\x12 .ledger.v1.CreateAccountsRequest\x1a!.ledger.v1.CreateAccountsResponse\x12I\n" +
 	"\n" +
 	"GetAccount\x12\x1c.ledger.v1.GetAccountRequest\x1a\x1d.ledger.v1.GetAccountResponse\x12U\n" +
-	"\x0eCreateTransfer\x12 .ledger.v1.CreateTransferRequest\x1a!.ledger.v1.CreateTransferResponseB*Z(aequitas-ledger/proto/ledger/v1;ledgerv1b\x06proto3"
+	"\x0eCreateTransfer\x12 .ledger.v1.CreateTransferRequest\x1a!.ledger.v1.CreateTransferResponse\x12X\n" +
+	"\x0fCreateTransfers\x12!.ledger.v1.CreateTransfersRequest\x1a\".ledger.v1.CreateTransfersResponseB*Z(aequitas-ledger/proto/ledger/v1;ledgerv1b\x06proto3"
 
 var (
 	file_proto_ledger_v1_ledger_proto_rawDescOnce sync.Once
@@ -622,17 +943,23 @@ func file_proto_ledger_v1_ledger_proto_rawDescGZIP() []byte {
 	return file_proto_ledger_v1_ledger_proto_rawDescData
 }
 
-var file_proto_ledger_v1_ledger_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_proto_ledger_v1_ledger_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_proto_ledger_v1_ledger_proto_goTypes = []any{
-	(*Money)(nil),                  // 0: ledger.v1.Money
-	(*Account)(nil),                // 1: ledger.v1.Account
-	(*Transfer)(nil),               // 2: ledger.v1.Transfer
-	(*CreateAccountRequest)(nil),   // 3: ledger.v1.CreateAccountRequest
-	(*CreateAccountResponse)(nil),  // 4: ledger.v1.CreateAccountResponse
-	(*GetAccountRequest)(nil),      // 5: ledger.v1.GetAccountRequest
-	(*GetAccountResponse)(nil),     // 6: ledger.v1.GetAccountResponse
-	(*CreateTransferRequest)(nil),  // 7: ledger.v1.CreateTransferRequest
-	(*CreateTransferResponse)(nil), // 8: ledger.v1.CreateTransferResponse
+	(*Money)(nil),                   // 0: ledger.v1.Money
+	(*Account)(nil),                 // 1: ledger.v1.Account
+	(*Transfer)(nil),                // 2: ledger.v1.Transfer
+	(*CreateAccountRequest)(nil),    // 3: ledger.v1.CreateAccountRequest
+	(*CreateAccountResponse)(nil),   // 4: ledger.v1.CreateAccountResponse
+	(*GetAccountRequest)(nil),       // 5: ledger.v1.GetAccountRequest
+	(*GetAccountResponse)(nil),      // 6: ledger.v1.GetAccountResponse
+	(*CreateTransferRequest)(nil),   // 7: ledger.v1.CreateTransferRequest
+	(*CreateTransferResponse)(nil),  // 8: ledger.v1.CreateTransferResponse
+	(*TransferResult)(nil),          // 9: ledger.v1.TransferResult
+	(*CreateTransfersRequest)(nil),  // 10: ledger.v1.CreateTransfersRequest
+	(*CreateTransfersResponse)(nil), // 11: ledger.v1.CreateTransfersResponse
+	(*AccountResult)(nil),           // 12: ledger.v1.AccountResult
+	(*CreateAccountsRequest)(nil),   // 13: ledger.v1.CreateAccountsRequest
+	(*CreateAccountsResponse)(nil),  // 14: ledger.v1.CreateAccountsResponse
 }
 var file_proto_ledger_v1_ledger_proto_depIdxs = []int32{
 	0,  // 0: ledger.v1.Account.posted_debits:type_name -> ledger.v1.Money
@@ -646,17 +973,27 @@ var file_proto_ledger_v1_ledger_proto_depIdxs = []int32{
 	1,  // 8: ledger.v1.GetAccountResponse.account:type_name -> ledger.v1.Account
 	0,  // 9: ledger.v1.CreateTransferRequest.amount:type_name -> ledger.v1.Money
 	2,  // 10: ledger.v1.CreateTransferResponse.transfer:type_name -> ledger.v1.Transfer
-	3,  // 11: ledger.v1.LedgerService.CreateAccount:input_type -> ledger.v1.CreateAccountRequest
-	5,  // 12: ledger.v1.LedgerService.GetAccount:input_type -> ledger.v1.GetAccountRequest
-	7,  // 13: ledger.v1.LedgerService.CreateTransfer:input_type -> ledger.v1.CreateTransferRequest
-	4,  // 14: ledger.v1.LedgerService.CreateAccount:output_type -> ledger.v1.CreateAccountResponse
-	6,  // 15: ledger.v1.LedgerService.GetAccount:output_type -> ledger.v1.GetAccountResponse
-	8,  // 16: ledger.v1.LedgerService.CreateTransfer:output_type -> ledger.v1.CreateTransferResponse
-	14, // [14:17] is the sub-list for method output_type
-	11, // [11:14] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	2,  // 11: ledger.v1.TransferResult.transfer:type_name -> ledger.v1.Transfer
+	2,  // 12: ledger.v1.CreateTransfersRequest.transfers:type_name -> ledger.v1.Transfer
+	9,  // 13: ledger.v1.CreateTransfersResponse.results:type_name -> ledger.v1.TransferResult
+	1,  // 14: ledger.v1.AccountResult.account:type_name -> ledger.v1.Account
+	3,  // 15: ledger.v1.CreateAccountsRequest.accounts:type_name -> ledger.v1.CreateAccountRequest
+	12, // 16: ledger.v1.CreateAccountsResponse.results:type_name -> ledger.v1.AccountResult
+	3,  // 17: ledger.v1.LedgerService.CreateAccount:input_type -> ledger.v1.CreateAccountRequest
+	13, // 18: ledger.v1.LedgerService.CreateAccounts:input_type -> ledger.v1.CreateAccountsRequest
+	5,  // 19: ledger.v1.LedgerService.GetAccount:input_type -> ledger.v1.GetAccountRequest
+	7,  // 20: ledger.v1.LedgerService.CreateTransfer:input_type -> ledger.v1.CreateTransferRequest
+	10, // 21: ledger.v1.LedgerService.CreateTransfers:input_type -> ledger.v1.CreateTransfersRequest
+	4,  // 22: ledger.v1.LedgerService.CreateAccount:output_type -> ledger.v1.CreateAccountResponse
+	14, // 23: ledger.v1.LedgerService.CreateAccounts:output_type -> ledger.v1.CreateAccountsResponse
+	6,  // 24: ledger.v1.LedgerService.GetAccount:output_type -> ledger.v1.GetAccountResponse
+	8,  // 25: ledger.v1.LedgerService.CreateTransfer:output_type -> ledger.v1.CreateTransferResponse
+	11, // 26: ledger.v1.LedgerService.CreateTransfers:output_type -> ledger.v1.CreateTransfersResponse
+	22, // [22:27] is the sub-list for method output_type
+	17, // [17:22] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_proto_ledger_v1_ledger_proto_init() }
@@ -670,7 +1007,7 @@ func file_proto_ledger_v1_ledger_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_ledger_v1_ledger_proto_rawDesc), len(file_proto_ledger_v1_ledger_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

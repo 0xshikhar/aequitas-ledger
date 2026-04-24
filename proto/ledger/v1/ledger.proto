@@ -59,8 +59,45 @@ message CreateTransferResponse {
   Transfer transfer = 1;
 }
 
+// Batched API (D1.1): one RPC submits up to 8192 items and returns one
+// positional result per item, mirroring TigerBeetle's batch protocol.
+message TransferResult {
+  bool ok = 1;
+  // transfer is set when ok is true: the committed transfer.
+  Transfer transfer = 2;
+  // error is set when ok is false: a human-readable per-item failure reason
+  // (e.g. insufficient funds, unknown account).
+  string error = 3;
+}
+
+message CreateTransfersRequest {
+  repeated Transfer transfers = 1;
+}
+
+message CreateTransfersResponse {
+  repeated TransferResult results = 1;
+}
+
+message AccountResult {
+  bool ok = 1;
+  // account is set when ok is true: the created account.
+  Account account = 2;
+  // error is set when ok is false.
+  string error = 3;
+}
+
+message CreateAccountsRequest {
+  repeated CreateAccountRequest accounts = 1;
+}
+
+message CreateAccountsResponse {
+  repeated AccountResult results = 1;
+}
+
 service LedgerService {
   rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
+  rpc CreateAccounts(CreateAccountsRequest) returns (CreateAccountsResponse);
   rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
   rpc CreateTransfer(CreateTransferRequest) returns (CreateTransferResponse);
+  rpc CreateTransfers(CreateTransfersRequest) returns (CreateTransfersResponse);
 }
