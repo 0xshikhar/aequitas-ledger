@@ -20,18 +20,18 @@ import (
 
 const bufSize = 1024 * 1024
 
-func setupGRPCServer(t *testing.T) (ledgerv1.LedgerServiceClient, func()) {
+func setupGRPCServer(tb testing.TB) (ledgerv1.LedgerServiceClient, func()) {
 	lis := bufconn.Listen(bufSize)
-	dir := t.TempDir()
+	dir := tb.TempDir()
 	w, err := wal.Open(dir, 1<<20)
 	if err != nil {
-		t.Fatalf("failed to open wal: %v", err)
+		tb.Fatalf("failed to open wal: %v", err)
 	}
 
 	cfg := engine.DefaultConfig()
 	ledger, err := engine.NewLedger(cfg, w)
 	if err != nil {
-		t.Fatalf("failed to start ledger: %v", err)
+		tb.Fatalf("failed to start ledger: %v", err)
 	}
 
 	grpcServer := grpc.NewServer(
@@ -42,7 +42,7 @@ func setupGRPCServer(t *testing.T) (ledgerv1.LedgerServiceClient, func()) {
 
 	go func() {
 		if err := grpcServer.Serve(lis); err != nil && err != grpc.ErrServerStopped {
-			t.Errorf("grpc server error: %v", err)
+			tb.Errorf("grpc server error: %v", err)
 		}
 	}()
 
@@ -53,7 +53,7 @@ func setupGRPCServer(t *testing.T) (ledgerv1.LedgerServiceClient, func()) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		t.Fatalf("failed to dial bufnet: %v", err)
+		tb.Fatalf("failed to dial bufnet: %v", err)
 	}
 
 	client := ledgerv1.NewLedgerServiceClient(conn)

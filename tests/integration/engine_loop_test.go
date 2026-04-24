@@ -81,7 +81,7 @@ func TestEventLoopConcurrentTransfersInvariant(t *testing.T) {
 					}
 					time.Sleep(time.Microsecond)
 				}
-				results <- <-ev.Result
+				results <- (<-ev.Result).Err
 			}
 		}()
 	}
