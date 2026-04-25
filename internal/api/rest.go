@@ -14,14 +14,27 @@ import (
 )
 
 type RESTServer struct {
-	ledger *engine.Ledger
-	mux    *http.ServeMux
+	ledger    *engine.Ledger
+	mux       *http.ServeMux
+	readiness func() bool // nil → ledger.Ready()
 }
 
-func NewRESTServer(ledger *engine.Ledger) *RESTServer {
+// RESTOption customizes the REST server.
+type RESTOption func(*RESTServer)
+
+// WithReadiness overrides the /readyz signal (e.g. a follower adds its
+// replication catch-up state to the ledger's own readiness).
+func WithReadiness(fn func() bool) RESTOption {
+	return func(s *RESTServer) { s.readiness = fn }
+}
+
+func NewRESTServer(ledger *engine.Ledger, opts ...RESTOption) *RESTServer {
 	s := &RESTServer{
 		ledger: ledger,
 		mux:    http.NewServeMux(),
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	s.registerRoutes()
 	return s
@@ -33,6 +46,7 @@ func (s *RESTServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *RESTServer) registerRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
+	s.mux.HandleFunc("/readyz", s.handleReadyz)
 	s.mux.HandleFunc("/v1/accounts", s.handleAccounts)
 	s.mux.HandleFunc("/v1/accounts/batch", s.handleBatchAccounts)
 	s.mux.HandleFunc("/v1/accounts/", s.handleGetAccount)
@@ -42,6 +56,22 @@ func (s *RESTServer) registerRoutes() {
 
 func (s *RESTServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "UP"})
+}
+
+// handleReadyz reports whether the node should receive traffic: recovery is
+// complete and (with a checkpointer configured) the first snapshot cycle
+// succeeded. Liveness (healthz) means the process is up; readiness means it
+// is safe to route to.
+func (s *RESTServer) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	ready := s.ledger.Ready()
+	if s.readiness != nil {
+		ready = s.readiness()
+	}
+	if !ready {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "NOT_READY"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "READY"})
 }
 
 type createAccountReq struct {
@@ -110,7 +140,12 @@ func (s *RESTServer) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, formatAccountResp(created))
+	resp, err := formatAccountResp(created)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *RESTServer) handleGetAccount(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +177,12 @@ func (s *RESTServer) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, formatAccountResp(acc))
+	resp, err := formatAccountResp(acc)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type createTransferReq struct {
@@ -442,7 +482,11 @@ func (s *RESTServer) handleBatchAccounts(w http.ResponseWriter, r *http.Request)
 			continue
 		}
 		results[i].OK = true
-		resp := formatAccountResp(outcomes[i].Account)
+		resp, ferr := formatAccountResp(outcomes[i].Account)
+		if ferr != nil {
+			results[i].Error = ferr.Error()
+			continue
+		}
 		results[i].Account = &resp
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
@@ -462,15 +506,18 @@ func parseHexID(s string) ([16]byte, error) {
 	return id, nil
 }
 
-func formatAccountResp(acc core.Account) accountResp {
-	bal := core.Balance(acc)
+func formatAccountResp(acc core.Account) (accountResp, error) {
+	bal, err := core.Balance(acc)
+	if err != nil {
+		return accountResp{}, err
+	}
 	return accountResp{
 		ID:            fmt.Sprintf("%x", acc.ID[:]),
 		Currency:      strings.TrimRight(string(acc.Currency[:]), "\x00"),
 		PostedDebits:  core.String(acc.PostedDebits),
 		PostedCredits: core.String(acc.PostedCredits),
 		Balance:       core.String(bal),
-	}
+	}, nil
 }
 
 func writeJSON(w http.ResponseWriter, code int, payload any) {

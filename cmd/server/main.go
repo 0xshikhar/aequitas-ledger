@@ -38,6 +38,8 @@ func main() {
 
 	cfg.Engine.SnapshotDir = cfg.SnapshotDir
 	cfg.Engine.IsFollower = (cfg.LedgerRole == "follower")
+	cfg.Engine.SnapshotInterval = cfg.SnapshotInterval
+	cfg.Engine.MaxSnapshotsKept = cfg.MaxSnapshotsKept
 
 	logger.Info("Initializing engine and executing WAL recovery...")
 	ledger, err := engine.NewLedger(cfg.Engine, w)
