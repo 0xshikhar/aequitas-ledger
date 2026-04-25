@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net"
 	"sync"
@@ -81,20 +82,21 @@ func (s *Server) handleConn(conn net.Conn) {
 	startLSN := int64(binary.BigEndian.Uint64(reqLSNBuf[:]))
 
 	// Stream WAL records starting from startLSN
-	var currentLSN int64 = 0
-	_ = s.wal.Recover(func(r wal.Record) error {
-		currentLSN++
-		if currentLSN < startLSN {
+	_ = s.wal.RecoverFromLSN(startLSN-1, func(r wal.Record) error {
+		if int64(r.LSN) < startLSN {
 			return nil
 		}
 
-		// Frame: [LSN: 8B] [Type: 1B] [Len: 4B] [Payload: NB]
+		// Frame: [LSN: 8B] [Type: 1B] [Len: 4B] [Payload: NB] [CRC32: 4B]
 		payloadLen := len(r.Payload)
-		buf := make([]byte, 8+1+4+payloadLen)
-		binary.BigEndian.PutUint64(buf[0:8], uint64(currentLSN))
+		frameLen := 8 + 1 + 4 + payloadLen + 4
+		buf := make([]byte, frameLen)
+		binary.BigEndian.PutUint64(buf[0:8], r.LSN)
 		buf[8] = byte(r.Type)
 		binary.BigEndian.PutUint32(buf[9:13], uint32(payloadLen))
-		copy(buf[13:], r.Payload)
+		copy(buf[13:13+payloadLen], r.Payload)
+		checksum := crc32.ChecksumIEEE(buf[:13+payloadLen])
+		binary.BigEndian.PutUint32(buf[13+payloadLen:], checksum)
 
 		if _, err := conn.Write(buf); err != nil {
 			return errors.New("replication client disconnected")

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net"
 	"sync"
@@ -122,40 +123,77 @@ func (f *Follower) syncLoop() error {
 		recType := wal.RecordType(headerBuf[8])
 		payloadLen := binary.BigEndian.Uint32(headerBuf[9:13])
 
-		payload := make([]byte, payloadLen)
-		if _, err := io.ReadFull(conn, payload); err != nil {
+		bodyBuf := make([]byte, payloadLen+4) // payload + 4B CRC32
+		if _, err := io.ReadFull(conn, bodyBuf); err != nil {
 			return err
 		}
 
-		if recType == wal.RecordTypeTransfer {
-			t, err := decodeTransferPayload(payload)
-			if err == nil {
-				f.mu.Lock()
-				if lsn > f.lastLSN {
-					f.applyTransfer(t)
-					f.lastLSN = lsn
-				}
-				f.mu.Unlock()
+		payload := bodyBuf[:payloadLen]
+		expectedCRC := binary.BigEndian.Uint32(bodyBuf[payloadLen:])
+
+		// Construct full header+payload frame for CRC validation
+		frame := make([]byte, 13+payloadLen)
+		copy(frame[0:13], headerBuf)
+		copy(frame[13:], payload)
+		actualCRC := crc32.ChecksumIEEE(frame)
+
+		if expectedCRC != actualCRC {
+			return fmt.Errorf("replication stream CRC mismatch: got %d want %d", actualCRC, expectedCRC)
+		}
+
+		rec := wal.Record{LSN: uint64(lsn), Type: recType, Payload: payload}
+
+		// Persist to local follower WAL first for promotion safety
+		if f.localWAL != nil {
+			if _, err := f.localWAL.AppendBatch([]wal.Record{rec}); err != nil {
+				return fmt.Errorf("follower local wal append failed: %w", err)
+			}
+			if err := f.localWAL.Sync(); err != nil {
+				return fmt.Errorf("follower local wal sync failed: %w", err)
 			}
 		}
+
+		f.mu.Lock()
+		if lsn > f.lastLSN {
+			if err := f.applyRecord(rec); err != nil {
+				f.mu.Unlock()
+				return fmt.Errorf("follower apply failed at LSN %d: %w", lsn, err)
+			}
+			f.lastLSN = lsn
+		}
+		f.mu.Unlock()
 	}
 }
 
-func (f *Follower) applyTransfer(t core.Transfer) {
-	debitAcc, err := f.accounts.Get(t.DebitAccountID)
-	if err != nil {
-		// Auto-seed missing account for follower readiness if needed
-		_ = f.accounts.Create(core.Account{ID: t.DebitAccountID})
+func (f *Follower) applyRecord(r wal.Record) error {
+	switch r.Type {
+	case wal.RecordTypeAccount:
+		acc, err := engine.DecodeAccountPayload(r.Payload)
+		if err != nil {
+			return err
+		}
+		if _, err := f.accounts.Get(acc.ID); err == nil {
+			return nil // Already present
+		}
+		return f.accounts.Create(acc)
+	case wal.RecordTypeTransfer:
+		t, err := engine.DecodeTransferPayload(r.Payload)
+		if err != nil {
+			return err
+		}
+		if _, err := f.accounts.Get(t.DebitAccountID); err != nil {
+			return fmt.Errorf("follower missing debit account %v: %w", t.DebitAccountID, err)
+		}
+		if _, err := f.accounts.Get(t.CreditAccountID); err != nil {
+			return fmt.Errorf("follower missing credit account %v: %w", t.CreditAccountID, err)
+		}
+		if err := f.accounts.ApplyDebit(t.DebitAccountID, t.Amount); err != nil {
+			return err
+		}
+		return f.accounts.ApplyCredit(t.CreditAccountID, t.Amount)
+	default:
+		return nil
 	}
-	creditAcc, err := f.accounts.Get(t.CreditAccountID)
-	if err != nil {
-		_ = f.accounts.Create(core.Account{ID: t.CreditAccountID})
-	}
-	_ = debitAcc
-	_ = creditAcc
-
-	f.accounts.ApplyDebit(t.DebitAccountID, t.Amount)
-	_ = f.accounts.ApplyCredit(t.CreditAccountID, t.Amount)
 }
 
 func decodeTransferPayload(payload []byte) (core.Transfer, error) {

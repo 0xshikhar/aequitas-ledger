@@ -123,6 +123,10 @@ func (w *WAL) Sync() error {
 	return w.current.Sync()
 }
 
+func (w *WAL) Dir() string {
+	return w.dir
+}
+
 func (w *WAL) CurrentLSN() int64 {
 	return w.currentLSN
 }
@@ -224,11 +228,23 @@ func (w *WAL) Rotate() error {
 }
 
 func (w *WAL) Recover(handler func(Record) error) error {
-	recovered, lastSegmentID, err := recoverSegments(w.dir, handler)
+	return w.RecoverFromLSN(0, handler)
+}
+
+func (w *WAL) RecoverFromLSN(fromLSN int64, handler func(Record) error) error {
+	filterHandler := func(r Record) error {
+		if int64(r.LSN) <= fromLSN {
+			return nil
+		}
+		return handler(r)
+	}
+	recovered, lastSegmentID, err := recoverSegments(w.dir, filterHandler)
 	if err != nil {
 		return err
 	}
-	w.currentLSN = recovered
+	if recovered > w.currentLSN {
+		w.currentLSN = recovered
+	}
 
 	if w.current != nil {
 		_ = w.current.Close()
