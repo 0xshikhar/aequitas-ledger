@@ -29,6 +29,11 @@ type EventLoop struct {
 	// closed is closed exactly once when Run exits; callers blocked on loop
 	// round-trips (snapshot views) use it to give up instead of hanging.
 	closed chan struct{}
+
+	// Reusable per-batch scratch (loop-goroutine-owned; the WAL copies the
+	// encoded bytes before AppendBatch returns, so reuse is safe).
+	recordsBuf []wal.Record
+	payloadBuf []byte
 }
 
 func NewEventLoop(b *Batcher, a *AccountManager, w *wal.WAL) *EventLoop {
@@ -71,6 +76,21 @@ func (l *EventLoop) Run(ctx context.Context) {
 		}
 
 		l.drainControl()
+
+		// Idle: block on every real wakeup source — producer arrivals,
+		// reads, account creates, snapshot views, shutdown. This replaced
+		// the busy-spin with a zero-CPU, zero-latency wait (S2.1).
+		if l.batcher.Idle() {
+			if !l.waitForWork(ctx) {
+				l.abandonPending()
+				return
+			}
+			l.drainControl()
+			if l.batcher.Idle() {
+				continue
+			}
+		}
+
 		batch := l.batcher.Collect(l.controlPending)
 		l.drainControl()
 		observability.RingBufferDepth.Set(float64(l.batcher.Depth()))
@@ -80,6 +100,38 @@ func (l *EventLoop) Run(ctx context.Context) {
 		}
 		l.processBatch(batch)
 	}
+}
+
+// waitForWork blocks until any wakeup source fires. It returns false only on
+// shutdown. Control requests that arrive while idle are serviced inline.
+func (l *EventLoop) waitForWork(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-l.batcher.ArriveChan():
+		return true
+	case req := <-l.readQueue:
+		l.handleRead(req)
+		return true
+	case req := <-l.accountCreateQueue:
+		l.processAccountCreate(req)
+		return true
+	case req := <-l.snapshotRequests:
+		accs := l.accounts.Snapshot()
+		req.Result <- SnapshotView{Accounts: accs, LSN: l.currentLSN}
+		return true
+	}
+}
+
+// handleRead answers one queued read (shared by drainControl and the idle
+// wait).
+func (l *EventLoop) handleRead(req ReadAccountEvent) {
+	acc, err := l.accounts.Get(req.ID)
+	var a core.Account
+	if acc != nil {
+		a = *acc
+	}
+	req.Result <- ReadAccountResult{Account: a, Err: err}
 }
 
 // abandonPending completes every still-queued transfer event with
@@ -130,12 +182,7 @@ func (l *EventLoop) drainControl() {
 			accs := l.accounts.Snapshot()
 			req.Result <- SnapshotView{Accounts: accs, LSN: l.currentLSN}
 		case req := <-l.readQueue:
-			acc, err := l.accounts.Get(req.ID)
-			var a core.Account
-			if acc != nil {
-				a = *acc
-			}
-			req.Result <- ReadAccountResult{Account: a, Err: err}
+			l.handleRead(req)
 		case req := <-l.accountCreateQueue:
 			l.processAccountCreate(req)
 		default:
@@ -150,7 +197,8 @@ func (l *EventLoop) drainControl() {
 func (l *EventLoop) processAccountCreate(req AccountCreateEvent) {
 	// Invariant-broken and duplicate accounts never enter the WAL batch;
 	// they fail per-item.
-	var recs []wal.Record
+	l.recordsBuf = l.recordsBuf[:0]
+	l.payloadBuf = l.payloadBuf[:0]
 	var walIdx []int
 	for i := range req.Accounts {
 		if err := ValidateAccount(req.Accounts[i]); err != nil {
@@ -161,9 +209,12 @@ func (l *EventLoop) processAccountCreate(req AccountCreateEvent) {
 			req.Results[i] = core.ErrDuplicateAccountID{AccountID: req.Accounts[i].ID}
 			continue
 		}
-		recs = append(recs, wal.Record{Type: wal.RecordTypeAccount, Payload: EncodeAccountPayload(req.Accounts[i])})
+		mark := len(l.payloadBuf)
+		l.payloadBuf = core.AppendAccountPayload(l.payloadBuf, req.Accounts[i])
+		l.recordsBuf = append(l.recordsBuf, wal.Record{Type: wal.RecordTypeAccount, Payload: l.payloadBuf[mark:]})
 		walIdx = append(walIdx, i)
 	}
+	recs := l.recordsBuf
 	if len(recs) == 0 {
 		close(req.Done)
 		return
@@ -196,7 +247,7 @@ func (l *EventLoop) processBatch(events []TransferEvent) {
 	observability.BatchSize.Observe(float64(nEvents))
 
 	outcomes := ValidateBatch(events, l.accounts)
-	records := makeWALRecords(events, outcomes)
+	records := l.makeWALRecords(events, outcomes)
 
 	if len(records) > 0 {
 		if _, err := l.wal.AppendBatch(records); err != nil {
@@ -234,8 +285,13 @@ func (l *EventLoop) processBatch(events []TransferEvent) {
 	observability.TransferDuration.Observe(time.Since(start).Seconds())
 }
 
-func makeWALRecords(events []TransferEvent, outcomes []error) []wal.Record {
-	recs := make([]wal.Record, 0, len(events))
+// makeWALRecords builds the WAL records for the batch into loop-owned
+// scratch buffers: zero allocations per transfer (S2.1). The WAL copies the
+// encoded payload bytes before AppendBatch returns, so the buffers can be
+// reused for the next batch.
+func (l *EventLoop) makeWALRecords(events []TransferEvent, outcomes []error) []wal.Record {
+	l.recordsBuf = l.recordsBuf[:0]
+	l.payloadBuf = l.payloadBuf[:0]
 	now := time.Now().UnixNano()
 	for i := range events {
 		if outcomes[i] != nil {
@@ -246,8 +302,10 @@ func makeWALRecords(events []TransferEvent, outcomes []error) []wal.Record {
 			t.Timestamp = now
 			now++
 		}
-		recs = append(recs, wal.Record{Type: wal.RecordTypeTransfer, Payload: EncodeTransferPayload(t)})
+		mark := len(l.payloadBuf)
+		l.payloadBuf = core.AppendTransferPayload(l.payloadBuf, t)
+		l.recordsBuf = append(l.recordsBuf, wal.Record{Type: wal.RecordTypeTransfer, Payload: l.payloadBuf[mark:]})
 		events[i].Transfer = t
 	}
-	return recs
+	return l.recordsBuf
 }

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"runtime"
+	"sync"
 	"sync/atomic"
 
 	"aequitas-ledger/internal/core"
@@ -17,6 +18,14 @@ type RingBuffer struct {
 	tail uint64        // consumer-owned sequence
 
 	tailShared atomic.Uint64 // producer-visible tail snapshot
+
+	// Arrival signaling (S2.1): lets the consumer block — instead of
+	// spinning — until a producer publishes. waitMu guards the channel
+	// swap; waiting is an atomic fast-path flag so producers pay one load
+	// when nobody waits.
+	notifyMu sync.Mutex
+	arrive   chan struct{}
+	waiting  atomic.Bool
 }
 
 // NewRingBuffer creates a ring buffer. size must be a power of two and > 0 —
@@ -47,10 +56,42 @@ func (rb *RingBuffer) Submit(ev TransferEvent) error {
 			idx := h & rb.mask
 			rb.buf[idx] = ev
 			rb.ready[idx].Store(h + 1)
+			rb.signalArrived()
 			return nil
 		}
 		runtime.Gosched()
 	}
+}
+
+// arriveChan returns the channel the consumer can block on for the next
+// arrival. It also arms the waiting flag, so any Submit that publishes after
+// this call is guaranteed to signal.
+func (rb *RingBuffer) arriveChan() <-chan struct{} {
+	rb.notifyMu.Lock()
+	defer rb.notifyMu.Unlock()
+	if rb.arrive == nil {
+		rb.arrive = make(chan struct{})
+	}
+	rb.waiting.Store(true)
+	return rb.arrive
+}
+
+// ArriveChanForTest exposes the arrival channel to external tests.
+func (rb *RingBuffer) ArriveChanForTest() <-chan struct{} { return rb.arriveChan() }
+
+// signalArrived wakes a blocked consumer, if one is waiting. Fast path: a
+// single atomic load when nobody waits.
+func (rb *RingBuffer) signalArrived() {
+	if !rb.waiting.Load() {
+		return
+	}
+	rb.notifyMu.Lock()
+	if rb.arrive != nil {
+		close(rb.arrive)
+		rb.arrive = nil
+	}
+	rb.waiting.Store(false)
+	rb.notifyMu.Unlock()
 }
 
 func (rb *RingBuffer) DrainBatch(max int) []TransferEvent {
