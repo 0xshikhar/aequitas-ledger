@@ -3,11 +3,14 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
 
 	"aequitas-ledger/internal/core"
+	"aequitas-ledger/internal/snapshot"
 	"aequitas-ledger/internal/wal"
 )
 
@@ -19,6 +22,8 @@ type Config struct {
 	IdempotencyMaxSize     int
 	IdempotencyTTL         time.Duration
 	InitialAccounts        []core.Account
+	SnapshotDir            string
+	IsFollower             bool
 }
 
 func DefaultConfig() Config {
@@ -33,11 +38,13 @@ func DefaultConfig() Config {
 }
 
 type Ledger struct {
-	loop     *EventLoop
-	rb       *RingBuffer
-	idempKey *IdempotencyStore
-	accounts *AccountManager
-	wal      *wal.WAL
+	loop        *EventLoop
+	rb          *RingBuffer
+	idempKey    *IdempotencyStore
+	accounts    *AccountManager
+	wal         *wal.WAL
+	snapshotDir string
+	isFollower  bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -52,20 +59,46 @@ func NewLedger(cfg Config, w *wal.WAL) (*Ledger, error) {
 		cfg = DefaultConfig()
 	}
 
+	snapshotDir := cfg.SnapshotDir
+	if snapshotDir == "" {
+		snapshotDir = filepath.Join(w.Dir(), "snapshots")
+	}
+
 	accounts := NewAccountManager(cfg.InitialAccountCapacity)
-	for _, a := range cfg.InitialAccounts {
-		if err := accounts.Create(a); err != nil {
-			return nil, err
+	if w.CurrentLSN() == 0 && len(cfg.InitialAccounts) > 0 {
+		var initRecs []wal.Record
+		for _, a := range cfg.InitialAccounts {
+			payload := EncodeAccountPayload(a)
+			initRecs = append(initRecs, wal.Record{Type: wal.RecordTypeAccount, Payload: payload})
+		}
+		if _, err := w.AppendBatch(initRecs); err != nil {
+			return nil, fmt.Errorf("failed to write initial accounts to WAL: %w", err)
+		}
+		if err := w.Sync(); err != nil {
+			return nil, fmt.Errorf("failed to sync initial accounts WAL: %w", err)
+		}
+	}
+
+	var snapshotLSN int64 = 0
+	if latestPath, _, err := snapshot.Latest(snapshotDir); err == nil && latestPath != "" {
+		snapAccounts, snapLSNRead, rerr := snapshot.Read(latestPath)
+		if rerr == nil {
+			for _, a := range snapAccounts {
+				_ = accounts.Create(a)
+			}
+			snapshotLSN = snapLSNRead
 		}
 	}
 
 	l := &Ledger{
-		rb:       NewRingBuffer(cfg.RingBufferSize),
-		idempKey: NewIdempotencyStore(cfg.IdempotencyMaxSize, cfg.IdempotencyTTL),
-		accounts: accounts,
-		wal:      w,
+		rb:          NewRingBuffer(cfg.RingBufferSize),
+		idempKey:    NewIdempotencyStore(cfg.IdempotencyMaxSize, cfg.IdempotencyTTL),
+		accounts:    accounts,
+		wal:         w,
+		snapshotDir: snapshotDir,
+		isFollower:  cfg.IsFollower,
 	}
-	if err := l.Recover(); err != nil {
+	if err := l.RecoverFromSnapshot(snapshotLSN); err != nil {
 		return nil, err
 	}
 
@@ -80,6 +113,10 @@ func NewLedger(cfg Config, w *wal.WAL) (*Ledger, error) {
 	return l, nil
 }
 
+func (l *Ledger) IsFollower() bool {
+	return l.isFollower
+}
+
 func (l *Ledger) Close() error {
 	if l.cancel != nil {
 		l.cancel()
@@ -89,6 +126,9 @@ func (l *Ledger) Close() error {
 }
 
 func (l *Ledger) CreateTransfer(ctx context.Context, t core.Transfer) (core.Transfer, error) {
+	if l.isFollower {
+		return core.Transfer{}, core.ErrNotLeader{}
+	}
 	key := t.IdempotencyKey
 	for {
 		existing, found, err := l.idempKey.CheckAndReserve(key)
@@ -132,6 +172,9 @@ func (l *Ledger) CreateTransfer(ctx context.Context, t core.Transfer) (core.Tran
 }
 
 func (l *Ledger) CreateAccount(ctx context.Context, acc core.Account) (core.Account, error) {
+	if l.isFollower {
+		return core.Account{}, core.ErrNotLeader{}
+	}
 	resChan := make(chan error, 1)
 	ev := AccountCreateEvent{Account: acc, Result: resChan}
 
@@ -178,17 +221,45 @@ func (l *Ledger) GetBalance(ctx context.Context, id [16]byte) (core.Uint128, err
 	return core.Balance(acc), nil
 }
 
+func (l *Ledger) TriggerSnapshot(ctx context.Context) (int64, error) {
+	if l.loop == nil {
+		return 0, nil
+	}
+	accs, lsn := l.loop.RequestSnapshotView()
+	if lsn <= 0 {
+		return 0, nil
+	}
+	snapPath := filepath.Join(l.snapshotDir, fmt.Sprintf("snapshot-%d.snap", lsn))
+	if err := snapshot.Write(snapPath, lsn, accs); err != nil {
+		return 0, fmt.Errorf("write snapshot: %w", err)
+	}
+	_ = snapshot.CleanupOldSnapshots(l.snapshotDir, 3)
+	if err := l.wal.TruncateBefore(lsn); err != nil {
+		return lsn, fmt.Errorf("truncate wal after snapshot: %w", err)
+	}
+	return lsn, nil
+}
+
 func (l *Ledger) Recover() error {
-	return l.wal.Recover(func(r wal.Record) error {
+	return l.RecoverFromSnapshot(0)
+}
+
+func (l *Ledger) RecoverFromSnapshot(fromLSN int64) error {
+	return l.wal.RecoverFromLSN(fromLSN, func(r wal.Record) error {
 		switch r.Type {
 		case wal.RecordTypeAccount:
-			acc, err := decodeAccountPayload(r.Payload)
+			acc, err := DecodeAccountPayload(r.Payload)
 			if err != nil {
 				return err
 			}
-			return l.accounts.Create(acc)
+			err = l.accounts.Create(acc)
+			var dup core.ErrDuplicateAccountID
+			if errors.As(err, &dup) {
+				return nil
+			}
+			return err
 		case wal.RecordTypeTransfer:
-			t, err := decodeTransferPayload(r.Payload)
+			t, err := DecodeTransferPayload(r.Payload)
 			if err != nil {
 				return err
 			}
