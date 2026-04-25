@@ -48,6 +48,9 @@ func (h *AccountsHandler) CreateAccount(ctx context.Context, req *ledgerv1.Creat
 
 	created, err := h.ledger.CreateAccount(ctx, acc)
 	if err != nil {
+		if errors.Is(err, core.ErrNotLeader{}) {
+			return nil, status.Errorf(codes.Unavailable, "%v", err)
+		}
 		var dup core.ErrDuplicateAccountID
 		if errors.As(err, &dup) {
 			return nil, status.Errorf(codes.AlreadyExists, "account already exists: %v", err)
@@ -128,6 +131,9 @@ func (h *AccountsHandler) CreateTransfer(ctx context.Context, req *ledgerv1.Crea
 
 	res, err := h.ledger.CreateTransfer(ctx, tr)
 	if err != nil {
+		if errors.Is(err, core.ErrNotLeader{}) {
+			return nil, status.Errorf(codes.Unavailable, "%v", err)
+		}
 		if errors.Is(err, core.ErrZeroAmount{}) || errors.Is(err, core.ErrSelfTransfer{}) {
 			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 		}

@@ -76,3 +76,7 @@ type ErrDuplicateTransferID struct{ ID [16]byte }
 func (e ErrDuplicateTransferID) Error() string {
 	return fmt.Sprintf("duplicate transfer id: %x", e.ID)
 }
+
+type ErrNotLeader struct{}
+
+func (ErrNotLeader) Error() string { return "node is running as a read-only follower (not leader)" }

@@ -14,6 +14,7 @@ import (
 	"aequitas-ledger/internal/config"
 	"aequitas-ledger/internal/engine"
 	"aequitas-ledger/internal/observability"
+	"aequitas-ledger/internal/replication"
 	"aequitas-ledger/internal/wal"
 	ledgerv1 "aequitas-ledger/proto/ledger/v1"
 
@@ -35,6 +36,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	cfg.Engine.SnapshotDir = cfg.SnapshotDir
+	cfg.Engine.IsFollower = (cfg.LedgerRole == "follower")
+
 	logger.Info("Initializing engine and executing WAL recovery...")
 	ledger, err := engine.NewLedger(cfg.Engine, w)
 	if err != nil {
@@ -43,6 +47,22 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("Engine initialized and WAL recovery completed successfully.")
+
+	// Start Replication based on LEDGER_ROLE
+	if cfg.LedgerRole == "follower" {
+		logger.Info("Node running in FOLLOWER (read-only) mode", "primary", cfg.PrimaryAddr)
+		follower := replication.NewFollower(cfg.PrimaryAddr, w)
+		follower.Start()
+		defer follower.Stop()
+	} else {
+		logger.Info("Node running in PRIMARY mode", "replication_port", cfg.ReplicationPort)
+		replServer := replication.NewServer(":"+cfg.ReplicationPort, w)
+		if err := replServer.Start(); err != nil {
+			logger.Error("failed to start replication listener", "error", err)
+		} else {
+			defer replServer.Stop()
+		}
+	}
 
 	// Start Observability / Metrics / pprof HTTP server
 	obsServer := observability.NewServer(":" + cfg.MetricsPort)
