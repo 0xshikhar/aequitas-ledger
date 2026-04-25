@@ -82,7 +82,7 @@ func (s *Segment) IsFull(nextWriteBytes int) bool {
 }
 
 func (s *Segment) Sync() error {
-	if err := s.file.Sync(); err != nil {
+	if err := syncFile(s.file); err != nil {
 		return err
 	}
 	s.syncedOffset = s.writeOffset
