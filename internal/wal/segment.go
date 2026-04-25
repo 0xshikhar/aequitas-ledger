@@ -12,11 +12,12 @@ const DefaultSegmentSize int64 = 64 << 20 // 64 MiB
 var ErrSegmentFull = errors.New("wal: segment full")
 
 type Segment struct {
-	id          int
-	path        string
-	file        *os.File
-	maxSize     int64
-	writeOffset int64
+	id           int
+	path         string
+	file         *os.File
+	maxSize      int64
+	writeOffset  int64
+	syncedOffset int64 // bytes known durable (advanced by Sync)
 }
 
 func openSegment(dir string, id int, maxSize int64) (*Segment, error) {
@@ -40,11 +41,12 @@ func openSegment(dir string, id int, maxSize int64) (*Segment, error) {
 	}
 
 	return &Segment{
-		id:          id,
-		path:        path,
-		file:        f,
-		maxSize:     maxSize,
-		writeOffset: info.Size(),
+		id:           id,
+		path:         path,
+		file:         f,
+		maxSize:      maxSize,
+		writeOffset:  info.Size(),
+		syncedOffset: info.Size(), // post-recovery content is committed-or-truncated
 	}, nil
 }
 
@@ -80,7 +82,16 @@ func (s *Segment) IsFull(nextWriteBytes int) bool {
 }
 
 func (s *Segment) Sync() error {
-	return s.file.Sync()
+	if err := s.file.Sync(); err != nil {
+		return err
+	}
+	s.syncedOffset = s.writeOffset
+	return nil
+}
+
+// SyncedOffset reports the byte offset through which the segment is durable.
+func (s *Segment) SyncedOffset() int64 {
+	return s.syncedOffset
 }
 
 func (s *Segment) Truncate(size int64) error {

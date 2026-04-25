@@ -10,9 +10,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
+// WAL is safe for concurrent use at the operation level: the event loop
+// appends/syncs while background goroutines (checkpointer, replication
+// streamer) read head state or truncate. The mutex serializes metadata and
+// file mutations; cost is one uncontended acquire per batch against
+// millisecond-scale fsyncs.
 type WAL struct {
+	mu          sync.Mutex
 	dir         string
 	segmentSize int64
 	current     *Segment
@@ -54,6 +61,8 @@ func Open(dir string, segmentSize int64) (*WAL, error) {
 // It assigns a monotonic LSN to each record and appends a BatchCommit record at the end.
 // It does not call fsync; call Sync exactly once after this for group commit.
 func (w *WAL) AppendBatch(records []Record) (int64, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if len(records) == 0 {
 		return w.currentLSN, nil
 	}
@@ -71,13 +80,13 @@ func (w *WAL) AppendBatch(records []Record) (int64, error) {
 		}
 
 		if w.current.IsFull(len(encoded)) {
-			if err := w.Rotate(); err != nil {
+			if err := w.rotateLocked(); err != nil {
 				return 0, err
 			}
 		}
 		if _, err := w.current.Write(encoded); err != nil {
 			if errors.Is(err, ErrSegmentFull) {
-				if rerr := w.Rotate(); rerr != nil {
+				if rerr := w.rotateLocked(); rerr != nil {
 					return 0, rerr
 				}
 				if _, werr := w.current.Write(encoded); werr != nil {
@@ -104,7 +113,7 @@ func (w *WAL) AppendBatch(records []Record) (int64, error) {
 		return 0, err
 	}
 	if w.current.IsFull(len(encodedCommit)) {
-		if err := w.Rotate(); err != nil {
+		if err := w.rotateLocked(); err != nil {
 			return 0, err
 		}
 	}
@@ -116,6 +125,8 @@ func (w *WAL) AppendBatch(records []Record) (int64, error) {
 }
 
 func (w *WAL) Sync() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.current == nil {
 		return nil
 	}
@@ -127,19 +138,37 @@ func (w *WAL) Dir() string {
 }
 
 func (w *WAL) CurrentLSN() int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	return w.currentLSN
+}
+
+// Head reports the current segment id and the byte offset through which that
+// segment is durable. Replication streaming reads up to this bound so it
+// never emits records the primary could still lose in a crash.
+func (w *WAL) Head() (currentID int, syncedOffset int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.current == nil {
+		return w.currentID, 0
+	}
+	return w.currentID, w.current.SyncedOffset()
 }
 
 // AdvanceLSNTo raises the in-memory LSN watermark when recovery state (e.g. a
 // loaded snapshot) proves the WAL head is behind it, so new records never reuse
 // LSNs at or below an already-persisted snapshot.
 func (w *WAL) AdvanceLSNTo(atLeast int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if atLeast > w.currentLSN {
 		w.currentLSN = atLeast
 	}
 }
 
 func (w *WAL) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.current == nil {
 		return nil
 	}
@@ -167,6 +196,8 @@ func (w *WAL) AppendCheckpoint(lsn int64) error {
 // segment boundary. Segments whose max LSN cannot be determined are never
 // deleted.
 func (w *WAL) TruncateBefore(lsn int64) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	ids, err := listSegmentIDs(w.dir)
 	if err != nil {
 		return err
@@ -269,7 +300,9 @@ func walkFrameChain(b []byte) (int, int64) {
 	return off, lastLSN
 }
 
-func (w *WAL) Rotate() error {
+// Rotate closes the current segment and opens the next. Callers must hold
+// w.mu (use the exported wrapper only outside locked sections).
+func (w *WAL) rotateLocked() error {
 	if w.current != nil {
 		if err := w.current.Sync(); err != nil {
 			return fmt.Errorf("sync current segment: %w", err)
@@ -288,11 +321,49 @@ func (w *WAL) Rotate() error {
 	return nil
 }
 
+// Rotate fsyncs and closes the current segment, then opens the next one.
+func (w *WAL) Rotate() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.rotateLocked()
+}
+
+// Reset empties the WAL (all segments removed, LSN watermark zeroed) and
+// reopens a fresh segment 1. Used by the follower's circuit-breaker full
+// re-sync; the caller must guarantee no concurrent appends.
+func (w *WAL) Reset() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.current != nil {
+		_ = w.current.Close()
+		w.current = nil
+	}
+	ids, err := listSegmentIDs(w.dir)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := os.Remove(segmentPath(w.dir, id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("reset: remove segment %d: %w", id, err)
+		}
+	}
+	w.currentID = 1
+	w.currentLSN = 0
+	seg, err := openSegment(w.dir, w.currentID, w.segmentSize)
+	if err != nil {
+		return err
+	}
+	w.current = seg
+	return nil
+}
+
 func (w *WAL) Recover(handler func(Record) error) error {
 	return w.RecoverFromLSN(0, handler)
 }
 
 func (w *WAL) RecoverFromLSN(fromLSN int64, handler func(Record) error) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	filterHandler := func(r Record) error {
 		if int64(r.LSN) <= fromLSN {
 			return nil

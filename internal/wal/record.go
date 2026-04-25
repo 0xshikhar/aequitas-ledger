@@ -25,6 +25,10 @@ const (
 	RecordTypeAccount     RecordType = 2
 	RecordTypeCheckpoint  RecordType = 3
 	RecordTypeBatchCommit RecordType = 4
+	// RecordTypeHead is replication-stream-only (never written to the WAL):
+	// a periodic announcement carrying the primary's durable head LSN so
+	// followers can report true lag.
+	RecordTypeHead RecordType = 5
 )
 
 type Record struct {
