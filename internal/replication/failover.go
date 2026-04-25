@@ -14,9 +14,9 @@ func (f *Follower) PromoteToPrimary(cfg engine.Config) (*engine.Ledger, error) {
 	// Step 1: Stop streaming replication loop
 	f.Stop()
 
-	// Step 2: Extract current accounts snapshot
+	// Step 2: Extract current accounts snapshot for logging and clear InitialAccounts
 	accs := f.Accounts()
-	cfg.InitialAccounts = accs
+	cfg.InitialAccounts = nil
 
 	// Step 3: Initialize new Ledger engine using local WAL
 	ledger, err := engine.NewLedger(cfg, f.localWAL)
