@@ -1,24 +1,58 @@
 version: '3.8'
 
 services:
-  aequitas-ledger:
+  ledger-primary:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: aequitas-primary
     ports:
       - "50051:50051"
+      - "8080:8080"
       - "6060:6060"
     environment:
       - PORT=50051
+      - REST_PORT=8080
       - METRICS_PORT=6060
       - LOG_LEVEL=info
       - LOG_FORMAT=json
+      - LEDGER_ROLE=PRIMARY
       - WAL_DIR=/var/lib/aequitas/wal
     volumes:
-      - ledger-data:/var/lib/aequitas/wal
+      - primary-wal-data:/var/lib/aequitas/wal
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  ledger-follower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aequitas-follower
+    ports:
+      - "50052:50051"
+      - "8081:8080"
+      - "6061:6060"
+    environment:
+      - PORT=50051
+      - REST_PORT=8080
+      - METRICS_PORT=6060
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - LEDGER_ROLE=FOLLOWER
+      - PRIMARY_ADDR=ledger-primary:50051
+      - WAL_DIR=/var/lib/aequitas/wal
+    volumes:
+      - follower-wal-data:/var/lib/aequitas/wal
+    depends_on:
+      ledger-primary:
+        condition: service_healthy
 
   prometheus:
     image: prom/prometheus:v2.51.0
+    container_name: aequitas-prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -26,6 +60,7 @@ services:
 
   grafana:
     image: grafana/grafana:10.4.0
+    container_name: aequitas-grafana
     ports:
       - "3000:3000"
     environment:
@@ -35,6 +70,7 @@ services:
 
   postgres:
     image: postgres:16-alpine
+    container_name: aequitas-postgres
     ports:
       - "5432:5432"
     environment:
@@ -45,5 +81,6 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
 volumes:
-  ledger-data:
+  primary-wal-data:
+  follower-wal-data:
   postgres-data:
