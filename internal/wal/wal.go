@@ -25,6 +25,8 @@ type WAL struct {
 	current     *Segment
 	currentID   int
 	currentLSN  int64
+	encBuf      []byte  // reusable batch-encode buffer (mu-guarded)
+	frameEnds   []int32 // end offset of each frame in encBuf (mu-guarded)
 }
 
 func Open(dir string, segmentSize int64) (*WAL, error) {
@@ -57,9 +59,11 @@ func Open(dir string, segmentSize int64) (*WAL, error) {
 	}, nil
 }
 
-// AppendBatch serializes all records and appends them to segments.
-// It assigns a monotonic LSN to each record and appends a BatchCommit record at the end.
-// It does not call fsync; call Sync exactly once after this for group commit.
+// AppendBatch serializes the whole batch into a single reusable buffer —
+// records plus the BatchCommit marker — and writes it with as few Write calls
+// as possible (one, or two when the batch straddles a rotation boundary).
+// It assigns a monotonic LSN to each record. It does not sync; call Sync
+// exactly once after this for group commit.
 func (w *WAL) AppendBatch(records []Record) (int64, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -68,60 +72,82 @@ func (w *WAL) AppendBatch(records []Record) (int64, error) {
 	}
 
 	startLSN := w.currentLSN + 1
+
+	// Encode everything into one buffer. Per-record allocations vanish: the
+	// buffer is reused across batches, and appendFrame appends in place.
+	// frameEnds records each frame's end offset — the only legal cut points
+	// when a rotation splits the batch across segments (recovery is
+	// per-segment, so a frame must never be split).
+	w.encBuf = w.encBuf[:0]
+	w.frameEnds = w.frameEnds[:0]
 	for i := range records {
 		w.currentLSN++
 		records[i].LSN = uint64(w.currentLSN)
-		encoded, err := EncodeRecord(records[i])
+		start := len(w.encBuf)
+		var err error
+		w.encBuf, err = appendFrame(w.encBuf, records[i])
 		if err != nil {
 			return 0, err
 		}
-		if len(encoded) > int(w.segmentSize) {
-			return 0, fmt.Errorf("wal: record larger than segment size: %d > %d", len(encoded), w.segmentSize)
+		if int64(len(w.encBuf)-start) > w.segmentSize {
+			return 0, fmt.Errorf("wal: record larger than segment size: %d > %d",
+				len(w.encBuf)-start, w.segmentSize)
 		}
+		w.frameEnds = append(w.frameEnds, int32(len(w.encBuf)))
+	}
+	// Commit marker frames the batch atomically.
+	w.currentLSN++
+	w.encBuf = appendCommitFrame(w.encBuf, w.currentLSN, len(records))
+	w.frameEnds = append(w.frameEnds, int32(len(w.encBuf)))
 
-		if w.current.IsFull(len(encoded)) {
+	if err := w.writeBuffered(w.encBuf); err != nil {
+		return 0, err
+	}
+	return startLSN, nil
+}
+
+// writeBuffered writes buf to the current segment in as few Writes as
+// possible, cutting only at frame boundaries when a rotation splits the
+// batch across segments. Any single frame larger than a fresh segment is
+// rejected (the per-frame bound checked during encoding makes this the only
+// oversized-frame guard needed).
+func (w *WAL) writeBuffered(buf []byte) error {
+	written := 0
+	fi := 0 // index into w.frameEnds
+	for written < len(buf) {
+		if w.current.IsFull(1) {
 			if err := w.rotateLocked(); err != nil {
-				return 0, err
+				return err
 			}
 		}
-		if _, err := w.current.Write(encoded); err != nil {
-			if errors.Is(err, ErrSegmentFull) {
-				if rerr := w.rotateLocked(); rerr != nil {
-					return 0, rerr
-				}
-				if _, werr := w.current.Write(encoded); werr != nil {
-					return 0, werr
+		space := w.current.maxSize - w.current.writeOffset
+
+		// Largest prefix ending at a frame boundary that fits.
+		end := written
+		for fi < len(w.frameEnds) && int64(w.frameEnds[fi]-int32(written)) <= space {
+			end = int(w.frameEnds[fi])
+			fi++
+		}
+		if end == written {
+			// The next frame does not fit in the remaining space. A fresh
+			// segment must fit every frame (each was bounded by segmentSize
+			// during encoding), so rotate and retry — anything else is a
+			// genuinely oversized frame.
+			if space < w.segmentSize {
+				if err := w.rotateLocked(); err != nil {
+					return err
 				}
 				continue
 			}
-			return 0, err
+			return fmt.Errorf("wal: record larger than segment size: frame %d > segment %d",
+				int(w.frameEnds[fi])-written, w.segmentSize)
 		}
-	}
-
-	// Append BatchCommit marker record to frame the batch atomically
-	w.currentLSN++
-	var commitPayload [12]byte
-	binary.BigEndian.PutUint64(commitPayload[0:8], uint64(w.currentLSN))
-	binary.BigEndian.PutUint32(commitPayload[8:12], uint32(len(records)))
-	commitRec := Record{
-		LSN:     uint64(w.currentLSN),
-		Type:    RecordTypeBatchCommit,
-		Payload: commitPayload[:],
-	}
-	encodedCommit, err := EncodeRecord(commitRec)
-	if err != nil {
-		return 0, err
-	}
-	if w.current.IsFull(len(encodedCommit)) {
-		if err := w.rotateLocked(); err != nil {
-			return 0, err
+		if _, err := w.current.Write(buf[written:end]); err != nil {
+			return err
 		}
+		written = end
 	}
-	if _, err := w.current.Write(encodedCommit); err != nil {
-		return 0, err
-	}
-
-	return startLSN, nil
+	return nil
 }
 
 func (w *WAL) Sync() error {

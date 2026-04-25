@@ -15,16 +15,28 @@ var (
 	ErrInvalidAccountPayload  = errors.New("core: invalid account payload")
 )
 
+// EncodeTransferPayload returns a freshly allocated wire payload. Hot paths
+// should use AppendTransferPayload into a shared buffer instead (S2.1).
 func EncodeTransferPayload(t Transfer) []byte {
-	b := make([]byte, TransferPayloadSize)
-	off := 0
+	return AppendTransferPayload(make([]byte, 0, TransferPayloadSize), t)
+}
+
+// AppendTransferPayload appends t's wire payload to dst without allocating
+// per call.
+func AppendTransferPayload(dst []byte, t Transfer) []byte {
+	var zeros [TransferPayloadSize]byte
+	start := len(dst)
+	dst = append(dst, zeros[:]...)
+	b := dst
+	off := start
 	copy(b[off:off+16], t.ID[:])
 	off += 16
 	copy(b[off:off+16], t.DebitAccountID[:])
 	off += 16
 	copy(b[off:off+16], t.CreditAccountID[:])
 	off += 16
-	copy(b[off:off+16], MarshalBinary(t.Amount))
+	binary.BigEndian.PutUint64(b[off:off+8], t.Amount.Hi)
+	binary.BigEndian.PutUint64(b[off+8:off+16], t.Amount.Lo)
 	off += 16
 	copy(b[off:off+32], t.IdempotencyKey[:])
 	off += 32
@@ -46,11 +58,10 @@ func DecodeTransferPayload(b []byte) (Transfer, error) {
 	off += 16
 	copy(t.CreditAccountID[:], b[off:off+16])
 	off += 16
-	amt, err := UnmarshalBinary(b[off : off+16])
-	if err != nil {
-		return Transfer{}, err
+	t.Amount = Uint128{
+		Hi: binary.BigEndian.Uint64(b[off : off+8]),
+		Lo: binary.BigEndian.Uint64(b[off+8 : off+16]),
 	}
-	t.Amount = amt
 	off += 16
 	copy(t.IdempotencyKey[:], b[off:off+32])
 	off += 32
@@ -60,16 +71,29 @@ func DecodeTransferPayload(b []byte) (Transfer, error) {
 	return t, nil
 }
 
+// EncodeAccountPayload returns a freshly allocated wire payload. Hot paths
+// should use AppendAccountPayload into a shared buffer instead (S2.1).
 func EncodeAccountPayload(a Account) []byte {
-	b := make([]byte, AccountPayloadSize)
-	off := 0
+	return AppendAccountPayload(make([]byte, 0, AccountPayloadSize), a)
+}
+
+// AppendAccountPayload appends a's wire payload to dst without allocating
+// per call.
+func AppendAccountPayload(dst []byte, a Account) []byte {
+	var zeros [AccountPayloadSize]byte
+	start := len(dst)
+	dst = append(dst, zeros[:]...)
+	b := dst
+	off := start
 	copy(b[off:off+16], a.ID[:])
 	off += 16
 	copy(b[off:off+4], a.Currency[:])
 	off += 4
-	copy(b[off:off+16], MarshalBinary(a.PostedDebits))
+	binary.BigEndian.PutUint64(b[off:off+8], a.PostedDebits.Hi)
+	binary.BigEndian.PutUint64(b[off+8:off+16], a.PostedDebits.Lo)
 	off += 16
-	copy(b[off:off+16], MarshalBinary(a.PostedCredits))
+	binary.BigEndian.PutUint64(b[off:off+8], a.PostedCredits.Hi)
+	binary.BigEndian.PutUint64(b[off+8:off+16], a.PostedCredits.Lo)
 	off += 16
 	binary.BigEndian.PutUint32(b[off:off+4], a.Flags)
 	return b
@@ -85,17 +109,15 @@ func DecodeAccountPayload(b []byte) (Account, error) {
 	off += 16
 	copy(a.Currency[:], b[off:off+4])
 	off += 4
-	debits, err := UnmarshalBinary(b[off : off+16])
-	if err != nil {
-		return Account{}, err
+	a.PostedDebits = Uint128{
+		Hi: binary.BigEndian.Uint64(b[off : off+8]),
+		Lo: binary.BigEndian.Uint64(b[off+8 : off+16]),
 	}
-	a.PostedDebits = debits
 	off += 16
-	credits, err := UnmarshalBinary(b[off : off+16])
-	if err != nil {
-		return Account{}, err
+	a.PostedCredits = Uint128{
+		Hi: binary.BigEndian.Uint64(b[off : off+8]),
+		Lo: binary.BigEndian.Uint64(b[off+8 : off+16]),
 	}
-	a.PostedCredits = credits
 	off += 16
 	a.Flags = binary.BigEndian.Uint32(b[off : off+4])
 	return a, nil

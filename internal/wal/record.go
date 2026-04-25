@@ -37,25 +37,52 @@ type Record struct {
 	Payload []byte
 }
 
+// EncodeRecord returns the wire frame for one record. Convenience wrapper
+// around appendFrame — batch writers should append into a shared buffer
+// instead (S2.1: one allocation per batch, not per record).
 func EncodeRecord(r Record) ([]byte, error) {
+	return appendFrame(nil, r)
+}
+
+// appendFrame appends the wire frame [LSN:8|type:1|len:4|payload|crc32:4] to
+// dst without allocating per record.
+func appendFrame(dst []byte, r Record) ([]byte, error) {
 	if r.Type == 0 {
-		return nil, ErrInvalidRecordType
+		return dst, ErrInvalidRecordType
 	}
 	if len(r.Payload) > int(^uint32(0)) {
-		return nil, ErrPayloadTooLarge
+		return dst, ErrPayloadTooLarge
 	}
+	start := len(dst)
+	var hdr [RecordHeaderSize]byte
+	binary.BigEndian.PutUint64(hdr[0:8], r.LSN)
+	hdr[8] = byte(r.Type)
+	binary.BigEndian.PutUint32(hdr[9:13], uint32(len(r.Payload)))
+	dst = append(dst, hdr[:]...)
+	dst = append(dst, r.Payload...)
+	checksum := crc32.ChecksumIEEE(dst[start:])
+	var crc [RecordCRCSize]byte
+	binary.BigEndian.PutUint32(crc[:], checksum)
+	return append(dst, crc[:]...), nil
+}
 
-	frameLen := RecordHeaderSize + len(r.Payload) + RecordCRCSize
-	out := make([]byte, frameLen)
-	binary.BigEndian.PutUint64(out[0:8], r.LSN)
-	out[8] = byte(r.Type)
-	binary.BigEndian.PutUint32(out[9:13], uint32(len(r.Payload)))
-	copy(out[13:13+len(r.Payload)], r.Payload)
-
-	checksum := crc32.ChecksumIEEE(out[:13+len(r.Payload)])
-	binary.BigEndian.PutUint32(out[13+len(r.Payload):], checksum)
-
-	return out, nil
+// appendCommitFrame appends the BatchCommit marker that frames a batch
+// atomically: payload is [commitLSN:8][recordCount:4].
+func appendCommitFrame(dst []byte, commitLSN int64, count int) []byte {
+	var payload [12]byte
+	binary.BigEndian.PutUint64(payload[0:8], uint64(commitLSN))
+	binary.BigEndian.PutUint32(payload[8:12], uint32(count))
+	start := len(dst)
+	var hdr [RecordHeaderSize]byte
+	binary.BigEndian.PutUint64(hdr[0:8], uint64(commitLSN))
+	hdr[8] = byte(RecordTypeBatchCommit)
+	binary.BigEndian.PutUint32(hdr[9:13], uint32(len(payload)))
+	dst = append(dst, hdr[:]...)
+	dst = append(dst, payload[:]...)
+	checksum := crc32.ChecksumIEEE(dst[start:])
+	var crc [RecordCRCSize]byte
+	binary.BigEndian.PutUint32(crc[:], checksum)
+	return append(dst, crc[:]...)
 }
 
 func DecodeRecord(frame []byte) (Record, error) {
