@@ -11,8 +11,14 @@ import (
 func (f *Follower) PromoteToPrimary(cfg engine.Config) (*engine.Ledger, error) {
 	slog.Info("Initiating Follower replica promotion to active Primary...", "lastLSN", f.LastLSN())
 
-	// Step 1: Stop streaming replication loop
+	// Step 1: Stop streaming replication loop and bump the leader term so
+	// the promoted primary outranks the old one (C0.8.3 fencing).
 	f.Stop()
+	term, err := BumpTerm(f.localWAL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to bump replication term: %w", err)
+	}
+	slog.Info("Replication term bumped for promotion", "term", term)
 
 	// Step 2: Extract current accounts snapshot for logging and clear InitialAccounts
 	accs := f.Accounts()
