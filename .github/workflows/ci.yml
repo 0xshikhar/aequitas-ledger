@@ -37,9 +37,10 @@ jobs:
 
       - name: Panic grep gate
         run: |
-          # C0.7 policy: no panic() in internal/ except the documented
-          # invariant panic in core/account.go (see ROADMAP C0.7).
-          hits=$(grep -RnE '\bpanic\(' internal --include='*.go' | grep -v 'internal/core/account.go' || true)
+          # C0.7 policy: no panic() anywhere in internal/ — invariant
+          # violations surface as typed errors + the invariant_violations
+          # metric instead.
+          hits=$(grep -RnE '\bpanic\(' internal --include='*.go' || true)
           if [ -n "$hits" ]; then
             echo "panic() found:"
             echo "$hits"

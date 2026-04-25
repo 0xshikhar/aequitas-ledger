@@ -41,8 +41,8 @@ bench: ## All benchmarks (1s each)
 bench-smoke: ## Assert catastrophic throughput regressions only (see scripts/bench_smoke.sh)
 	./scripts/bench_smoke.sh
 
-panic-gate: ## No panic() in internal/ except the documented invariant panic (C0.7)
-	@hits=$$(grep -RnE '\bpanic\(' internal --include='*.go' | grep -v 'internal/core/account.go' || true); \
+panic-gate: ## No panic() anywhere in internal/
+	@hits=$$(grep -RnE '\bpanic\(' internal --include='*.go' || true); \
 	if [ -n "$$hits" ]; then echo "panic() found:"; echo "$$hits"; exit 1; fi; \
 	echo "panic gate ok"
 
