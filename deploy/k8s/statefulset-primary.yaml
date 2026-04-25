@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: aequitas-primary
+  namespace: default
+  labels:
+    app: aequitas-ledger
+    role: primary
+spec:
+  serviceName: aequitas-primary-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aequitas-ledger
+      role: primary
+  template:
+    metadata:
+      labels:
+        app: aequitas-ledger
+        role: primary
+    spec:
+      containers:
+        - name: ledger-server
+          image: aequitas-ledger:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: aequitas-config
+          env:
+            - name: LEDGER_ROLE
+              value: "PRIMARY"
+          ports:
+            - containerPort: 50051
+              name: grpc
+            - containerPort: 8080
+              name: rest
+            - containerPort: 6060
+              name: metrics
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          volumeMounts:
+            - name: wal-storage
+              mountPath: /var/lib/aequitas/wal
+  volumeClaimTemplates:
+    - metadata:
+        name: wal-storage
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 10Gi

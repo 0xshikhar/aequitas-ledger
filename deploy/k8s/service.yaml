@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: aequitas-primary-headless
+  namespace: default
+  labels:
+    app: aequitas-ledger
+    role: primary
+spec:
+  clusterIP: None
+  selector:
+    app: aequitas-ledger
+    role: primary
+  ports:
+    - port: 50051
+      name: grpc
+      targetPort: 50051
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aequitas-ledger-service
+  namespace: default
+  labels:
+    app: aequitas-ledger
+spec:
+  type: ClusterIP
+  selector:
+    app: aequitas-ledger
+  ports:
+    - port: 50051
+      name: grpc
+      targetPort: 50051
+    - port: 8080
+      name: rest
+      targetPort: 8080
+    - port: 6060
+      name: metrics
+      targetPort: 6060

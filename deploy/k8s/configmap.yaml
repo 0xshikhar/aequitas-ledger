@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aequitas-config
+  namespace: default
+data:
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  PORT: "50051"
+  REST_PORT: "8080"
+  METRICS_PORT: "6060"
+  WAL_DIR: "/var/lib/aequitas/wal"
