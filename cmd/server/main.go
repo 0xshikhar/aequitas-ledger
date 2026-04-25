@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
 	"aequitas-ledger/internal/api"
+	"aequitas-ledger/internal/config"
 	"aequitas-ledger/internal/engine"
 	"aequitas-ledger/internal/observability"
 	"aequitas-ledger/internal/wal"
@@ -21,48 +21,22 @@ import (
 )
 
 func main() {
-	logLevel := os.Getenv("LOG_LEVEL")
-	if logLevel == "" {
-		logLevel = "info"
-	}
-	logFormat := os.Getenv("LOG_FORMAT")
-	if logFormat == "" {
-		logFormat = "text"
-	}
-	logger := observability.InitLogger(logLevel, logFormat)
+	cfg := config.Load()
+	logger := observability.InitLogger(cfg.LogLevel, cfg.LogFormat)
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "50051"
-	}
-	restPort := os.Getenv("REST_PORT")
-	if restPort == "" {
-		restPort = "8080"
-	}
-	metricsPort := os.Getenv("METRICS_PORT")
-	if metricsPort == "" {
-		metricsPort = "6060"
-	}
-	walDir := os.Getenv("WAL_DIR")
-	if walDir == "" {
-		walDir = filepath.Join(".", "data", "wal")
-	}
-
-	if err := os.MkdirAll(walDir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.WALDir, 0755); err != nil {
 		logger.Error("failed to create wal directory", "error", err)
 		os.Exit(1)
 	}
 
-	w, err := wal.Open(walDir, 64<<20) // 64MB segment size
+	w, err := wal.Open(cfg.WALDir, cfg.WALSegmentSize)
 	if err != nil {
 		logger.Error("failed to open wal", "error", err)
 		os.Exit(1)
 	}
 
-	cfg := engine.DefaultConfig()
-
 	logger.Info("Initializing engine and executing WAL recovery...")
-	ledger, err := engine.NewLedger(cfg, w)
+	ledger, err := engine.NewLedger(cfg.Engine, w)
 	if err != nil {
 		_ = w.Close()
 		logger.Error("failed to initialize ledger and recover WAL", "error", err)
@@ -71,9 +45,9 @@ func main() {
 	logger.Info("Engine initialized and WAL recovery completed successfully.")
 
 	// Start Observability / Metrics / pprof HTTP server
-	obsServer := observability.NewServer(":" + metricsPort)
+	obsServer := observability.NewServer(":" + cfg.MetricsPort)
 	go func() {
-		logger.Info("Starting observability server (metrics/pprof)", "port", metricsPort)
+		logger.Info("Starting observability server (metrics/pprof)", "port", cfg.MetricsPort)
 		if err := obsServer.Start(); err != nil {
 			logger.Error("observability server error", "error", err)
 		}
@@ -82,23 +56,23 @@ func main() {
 	// Start REST API HTTP Gateway
 	restServer := api.NewRESTServer(ledger)
 	httpServer := &http.Server{
-		Addr:         ":" + restPort,
+		Addr:         ":" + cfg.RESTPort,
 		Handler:      restServer,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
 	go func() {
-		logger.Info("Starting REST API HTTP Gateway", "port", restPort)
+		logger.Info("Starting REST API HTTP Gateway", "port", cfg.RESTPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("REST HTTP server error", "error", err)
 		}
 	}()
 
 	// Start gRPC server
-	lis, err := net.Listen("tcp", ":"+port)
+	lis, err := net.Listen("tcp", ":"+cfg.GRPCPort)
 	if err != nil {
 		_ = ledger.Close()
-		logger.Error("failed to listen on gRPC port", "port", port, "error", err)
+		logger.Error("failed to listen on gRPC port", "port", cfg.GRPCPort, "error", err)
 		os.Exit(1)
 	}
 
@@ -109,7 +83,7 @@ func main() {
 	ledgerv1.RegisterLedgerServiceServer(grpcServer, handler)
 
 	go func() {
-		logger.Info("Starting gRPC server", "port", port)
+		logger.Info("Starting gRPC server", "port", cfg.GRPCPort)
 		if err := grpcServer.Serve(lis); err != nil && err != grpc.ErrServerStopped {
 			logger.Error("gRPC server error", "error", err)
 		}
