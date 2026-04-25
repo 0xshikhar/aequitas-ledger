@@ -1,6 +1,9 @@
 package engine
 
-import "aequitas-ledger/internal/core"
+import (
+	"aequitas-ledger/internal/core"
+	"aequitas-ledger/internal/observability"
+)
 
 func ValidateBatch(events []TransferEvent, accounts *AccountManager) []error {
 	outcomes := make([]error, len(events))
@@ -22,7 +25,12 @@ func ApplyBatch(events []TransferEvent, outcomes []error, accounts *AccountManag
 			outcomes[i] = err
 			continue
 		}
-		bal := core.Balance(*debitAcc)
+		bal, err := core.Balance(*debitAcc)
+		if err != nil {
+			observability.InvariantViolations.Inc()
+			outcomes[i] = err
+			continue
+		}
 		if core.Cmp(bal, t.Amount) < 0 {
 			outcomes[i] = core.ErrInsufficientFunds{AccountID: t.DebitAccountID, Balance: bal, Amount: t.Amount}
 			continue

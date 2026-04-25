@@ -150,7 +150,10 @@ func (s *Store) CreateTransfer(ctx context.Context, tr core.Transfer) (core.Tran
 	debDebits, _ := core.FromString(debitDebitsStr)
 	debCredits, _ := core.FromString(debitCreditsStr)
 	debAcc := core.Account{ID: tr.DebitAccountID, PostedDebits: debDebits, PostedCredits: debCredits}
-	bal := core.Balance(debAcc)
+	bal, err := core.Balance(debAcc)
+	if err != nil {
+		return core.Transfer{}, err
+	}
 
 	if core.Cmp(bal, tr.Amount) < 0 {
 		return core.Transfer{}, core.ErrInsufficientFunds{AccountID: tr.DebitAccountID, Balance: bal, Amount: tr.Amount}

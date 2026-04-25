@@ -58,8 +58,12 @@ func (h *AccountsHandler) CreateAccount(ctx context.Context, req *ledgerv1.Creat
 		return nil, status.Errorf(codes.Internal, "failed to create account: %v", err)
 	}
 
+	protoAcc, err := coreAccountToProto(created)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%s", err.Error())
+	}
 	return &ledgerv1.CreateAccountResponse{
-		Account: coreAccountToProto(created),
+		Account: protoAcc,
 	}, nil
 }
 
@@ -82,8 +86,12 @@ func (h *AccountsHandler) GetAccount(ctx context.Context, req *ledgerv1.GetAccou
 		return nil, status.Errorf(codes.Internal, "failed to get account: %v", err)
 	}
 
+	protoAcc, err := coreAccountToProto(acc)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "%s", err.Error())
+	}
 	return &ledgerv1.GetAccountResponse{
-		Account: coreAccountToProto(acc),
+		Account: protoAcc,
 	}, nil
 }
 
@@ -259,7 +267,12 @@ func (h *AccountsHandler) CreateAccounts(ctx context.Context, req *ledgerv1.Crea
 			results[i] = &ledgerv1.AccountResult{Ok: false, Error: outcomes[i].Err.Error()}
 			continue
 		}
-		results[i] = &ledgerv1.AccountResult{Ok: true, Account: coreAccountToProto(outcomes[i].Account)}
+		protoAcc, perr := coreAccountToProto(outcomes[i].Account)
+		if perr != nil {
+			results[i] = &ledgerv1.AccountResult{Ok: false, Error: perr.Error()}
+			continue
+		}
+		results[i] = &ledgerv1.AccountResult{Ok: true, Account: protoAcc}
 	}
 	return &ledgerv1.CreateAccountsResponse{Results: results}, nil
 }
@@ -307,13 +320,16 @@ func bytesToID(b []byte) ([16]byte, error) {
 	return id, nil
 }
 
-func coreAccountToProto(acc core.Account) *ledgerv1.Account {
-	bal := core.Balance(acc)
+func coreAccountToProto(acc core.Account) (*ledgerv1.Account, error) {
+	bal, err := core.Balance(acc)
+	if err != nil {
+		return nil, err
+	}
 	return &ledgerv1.Account{
 		Id:            acc.ID[:],
 		Currency:      string(acc.Currency[:]),
 		PostedDebits:  &ledgerv1.Money{Lo: acc.PostedDebits.Lo, Hi: acc.PostedDebits.Hi},
 		PostedCredits: &ledgerv1.Money{Lo: acc.PostedCredits.Lo, Hi: acc.PostedCredits.Hi},
 		Balance:       &ledgerv1.Money{Lo: bal.Lo, Hi: bal.Hi},
-	}
+	}, nil
 }

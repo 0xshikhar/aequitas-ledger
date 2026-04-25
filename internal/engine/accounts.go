@@ -1,6 +1,9 @@
 package engine
 
-import "aequitas-ledger/internal/core"
+import (
+	"aequitas-ledger/internal/core"
+	"aequitas-ledger/internal/observability"
+)
 
 type AccountManager struct {
 	accounts []core.Account
@@ -32,6 +35,16 @@ func (m *AccountManager) Get(id [16]byte) (*core.Account, error) {
 		return nil, core.ErrAccountNotFound{AccountID: id}
 	}
 	return &m.accounts[idx], nil
+}
+
+// ValidateAccount rejects account state that violates the ledger's
+// non-negative-balance invariant before it can enter the WAL.
+func ValidateAccount(a core.Account) error {
+	if _, err := core.Balance(a); err != nil {
+		observability.InvariantViolations.Inc()
+		return err
+	}
+	return nil
 }
 
 func (m *AccountManager) ValidateTransfer(t core.Transfer) error {
@@ -67,7 +80,11 @@ func (m *AccountManager) ValidateTransfer(t core.Transfer) error {
 		return core.ErrAccountClosed{AccountID: credit.ID}
 	}
 
-	bal := core.Balance(*debit)
+	bal, err := core.Balance(*debit)
+	if err != nil {
+		observability.InvariantViolations.Inc()
+		return err
+	}
 	if core.Cmp(bal, t.Amount) < 0 {
 		return core.ErrInsufficientFunds{AccountID: debit.ID, Balance: bal, Amount: t.Amount}
 	}
@@ -85,6 +102,13 @@ func (m *AccountManager) ApplyDebit(id [16]byte, amount core.Uint128) error {
 		return core.ErrBalanceOverflow{AccountID: id}
 	}
 	acc.PostedDebits = next
+	// Post-apply invariant assert: pre-validation makes this unreachable for
+	// well-formed state; a violation here means stored state was already
+	// broken, so report it loudly rather than silently continuing.
+	if _, err := core.Balance(*acc); err != nil {
+		observability.InvariantViolations.Inc()
+		return err
+	}
 	return nil
 }
 

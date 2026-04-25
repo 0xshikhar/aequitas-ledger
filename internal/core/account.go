@@ -16,12 +16,21 @@ type Account struct {
 	_             [4]byte
 }
 
-func Balance(a Account) Uint128 {
+// Balance returns credits − debits. A negative balance means the account's
+// stored state violates the ledger's non-negative-balance invariant, which is
+// reported as ErrInvariantViolation rather than panicked: callers decide the
+// policy (fail the transfer item, refuse the read, reject the account), and
+// the event loop increments the invariant-violations metric.
+func Balance(a Account) (Uint128, error) {
 	bal, err := Sub(a.PostedCredits, a.PostedDebits)
 	if err != nil {
-		panic("account invariant violated: posted debits exceed posted credits")
+		return Uint128{}, ErrInvariantViolation{
+			AccountID:     a.ID,
+			PostedDebits:  a.PostedDebits,
+			PostedCredits: a.PostedCredits,
+		}
 	}
-	return bal
+	return bal, nil
 }
 
 func IsFrozen(a Account) bool {

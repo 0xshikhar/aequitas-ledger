@@ -93,3 +93,19 @@ type ErrInvalidRingBufferSize struct{ Size int }
 func (e ErrInvalidRingBufferSize) Error() string {
 	return fmt.Sprintf("ring buffer size must be a power of two and > 0, got %d", e.Size)
 }
+
+// ErrInvariantViolation reports stored account state that violates the
+// ledger's non-negative-balance invariant (posted debits exceed posted
+// credits). It is returned — never panicked — so the single-writer loop can
+// fail the offending item, increment the invariant-violations metric, and
+// keep the process alive to be inspected.
+type ErrInvariantViolation struct {
+	AccountID     [16]byte
+	PostedDebits  Uint128
+	PostedCredits Uint128
+}
+
+func (e ErrInvariantViolation) Error() string {
+	return fmt.Sprintf("account invariant violated: %x has debits %s > credits %s",
+		e.AccountID, String(e.PostedDebits), String(e.PostedCredits))
+}
