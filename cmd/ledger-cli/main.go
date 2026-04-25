@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"aequitas-ledger/internal/audit"
 )
 
 var (
@@ -28,6 +30,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  account get      Get account details by ID\n")
 		fmt.Fprintf(os.Stderr, "  transfer create  Create a new transfer between accounts\n")
 		fmt.Fprintf(os.Stderr, "  info             Get ledger health status\n")
+		fmt.Fprintf(os.Stderr, "  audit            Independently verify a WAL directory (T3.4)\n")
 	}
 
 	flag.Parse()
@@ -57,6 +60,8 @@ func main() {
 		transferCmd(client, args[2:])
 	case "info":
 		infoCmd(client)
+	case "audit":
+		auditCmd(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		flag.Usage()
@@ -176,4 +181,43 @@ func printResponse(resp *http.Response) {
 	} else {
 		fmt.Println(prettyJSON.String())
 	}
+}
+
+// auditCmd runs the independent WAL auditor (T3.4): it re-implements the
+// frame format, batch atomicity, LSN ordering, and conservation checks with
+// code that shares nothing with the engine's recovery, and exits non-zero if
+// any violation is found.
+func auditCmd(args []string) {
+	fs := flag.NewFlagSet("audit", flag.ExitOnError)
+	walDir := fs.String("wal", "", "path to the WAL directory to audit")
+	fs.Parse(args)
+	if *walDir == "" {
+		fmt.Fprintln(os.Stderr, "audit requires --wal <dir>")
+		os.Exit(1)
+	}
+
+	rep, err := audit.Audit(*walDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "audit failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("WAL audit: %s\n", *walDir)
+	fmt.Printf("  segments:   %d\n", rep.Segments)
+	fmt.Printf("  records:    %d\n", rep.Records)
+	fmt.Printf("  batches:    %d\n", rep.Batches)
+	fmt.Printf("  accounts:   %d\n", rep.Accounts)
+	fmt.Printf("  transfers:  %d\n", rep.Transfers)
+	if rep.TornTail != nil {
+		fmt.Printf("  torn tail:  %s\n", rep.TornTail.Detail)
+	}
+	if rep.Valid() {
+		fmt.Println("  result:     PASS — no violations")
+		return
+	}
+	fmt.Printf("  result:     FAIL — %d violation(s)\n", len(rep.Violations))
+	for _, v := range rep.Violations {
+		fmt.Printf("    - %s\n", v)
+	}
+	os.Exit(1)
 }
