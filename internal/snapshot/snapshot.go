@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unsafe"
-
 	"aequitas-ledger/internal/core"
 )
 
@@ -68,7 +66,7 @@ func Write(path string, lsn int64, accounts []core.Account) error {
 
 	// 4. Accounts payload (64 bytes per account)
 	for i := range accounts {
-		raw := (*[AccountSize]byte)(unsafe.Pointer(&accounts[i]))[:]
+		raw := core.EncodeAccountPayload(accounts[i])
 		if _, err := writer.Write(raw); err != nil {
 			return err
 		}
@@ -129,8 +127,11 @@ func Read(path string) ([]core.Account, int64, error) {
 
 	for i := uint64(0); i < count; i++ {
 		offset := i * AccountSize
-		accPtr := (*core.Account)(unsafe.Pointer(&payload[offset]))
-		accounts[i] = *accPtr
+		acc, err := core.DecodeAccountPayload(payload[offset : offset+AccountSize])
+		if err != nil {
+			return nil, 0, fmt.Errorf("decode snapshot account %d: %w", i, err)
+		}
+		accounts[i] = acc
 	}
 
 	return accounts, lsn, nil

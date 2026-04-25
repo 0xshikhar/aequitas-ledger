@@ -80,7 +80,7 @@ func (l *EventLoop) processAccountCreate(req AccountCreateEvent) {
 		return
 	}
 
-	payload := encodeAccountPayload(req.Account)
+	payload := EncodeAccountPayload(req.Account)
 	rec := wal.Record{Type: wal.RecordTypeAccount, Payload: payload}
 	if _, err := l.wal.AppendBatch([]wal.Record{rec}); err != nil {
 		req.Result <- err
@@ -148,7 +148,7 @@ func makeWALRecords(events []TransferEvent, outcomes []error) []wal.Record {
 			t.Timestamp = now
 			now++
 		}
-		recs = append(recs, wal.Record{Type: wal.RecordTypeTransfer, Payload: encodeTransferPayload(t)})
+		recs = append(recs, wal.Record{Type: wal.RecordTypeTransfer, Payload: EncodeTransferPayload(t)})
 		events[i].Transfer = t
 	}
 	return recs
