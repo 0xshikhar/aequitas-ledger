@@ -26,6 +26,9 @@ type EventLoop struct {
 	snapshotRequests   chan SnapshotRequest
 	readQueue          chan ReadAccountEvent
 	accountCreateQueue chan AccountCreateEvent
+	// closed is closed exactly once when Run exits; callers blocked on loop
+	// round-trips (snapshot views) use it to give up instead of hanging.
+	closed chan struct{}
 }
 
 func NewEventLoop(b *Batcher, a *AccountManager, w *wal.WAL) *EventLoop {
@@ -37,17 +40,28 @@ func NewEventLoop(b *Batcher, a *AccountManager, w *wal.WAL) *EventLoop {
 		snapshotRequests:   make(chan SnapshotRequest, 10),
 		readQueue:          make(chan ReadAccountEvent, 1024),
 		accountCreateQueue: make(chan AccountCreateEvent, 256),
+		closed:             make(chan struct{}),
 	}
 }
 
 func (l *EventLoop) RequestSnapshotView() ([]core.Account, int64) {
 	req := SnapshotRequest{Result: make(chan SnapshotView, 1)}
-	l.snapshotRequests <- req
-	view := <-req.Result
-	return view.Accounts, view.LSN
+	select {
+	case l.snapshotRequests <- req:
+		select {
+		case view := <-req.Result:
+			return view.Accounts, view.LSN
+		case <-l.closed:
+			// Loop exited before servicing the request.
+			return nil, 0
+		}
+	case <-l.closed:
+		return nil, 0
+	}
 }
 
 func (l *EventLoop) Run(ctx context.Context) {
+	defer close(l.closed)
 	for {
 		select {
 		case <-ctx.Done():
@@ -85,6 +99,10 @@ func (l *EventLoop) abandonPending() {
 	}
 	for {
 		select {
+		case req := <-l.snapshotRequests:
+			// Shutdown drain: reply empty so the requester sees LSN 0
+			// ("nothing to snapshot") instead of hanging.
+			req.Result <- SnapshotView{}
 		case req := <-l.accountCreateQueue:
 			for i := range req.Results {
 				req.Results[i] = core.ErrLedgerClosed{}
@@ -130,10 +148,15 @@ func (l *EventLoop) drainControl() {
 // WAL append + one sync for the whole batch, positional results, a single
 // completion notification via req.Done.
 func (l *EventLoop) processAccountCreate(req AccountCreateEvent) {
-	// Duplicates never enter the WAL batch; they fail per-item.
+	// Invariant-broken and duplicate accounts never enter the WAL batch;
+	// they fail per-item.
 	var recs []wal.Record
 	var walIdx []int
 	for i := range req.Accounts {
+		if err := ValidateAccount(req.Accounts[i]); err != nil {
+			req.Results[i] = err
+			continue
+		}
 		if _, err := l.accounts.Get(req.Accounts[i].ID); err == nil {
 			req.Results[i] = core.ErrDuplicateAccountID{AccountID: req.Accounts[i].ID}
 			continue

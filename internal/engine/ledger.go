@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"aequitas-ledger/internal/core"
+	"aequitas-ledger/internal/observability"
 	"aequitas-ledger/internal/snapshot"
 	"aequitas-ledger/internal/wal"
 )
@@ -24,6 +27,10 @@ type Config struct {
 	InitialAccounts        []core.Account
 	SnapshotDir            string
 	IsFollower             bool
+	// SnapshotInterval > 0 starts the background checkpointer (C0.5);
+	// 0 disables it. MaxSnapshotsKept bounds retention (default 3).
+	SnapshotInterval time.Duration
+	MaxSnapshotsKept int
 }
 
 func DefaultConfig() Config {
@@ -45,6 +52,11 @@ type Ledger struct {
 	wal         *wal.WAL
 	snapshotDir string
 	isFollower  bool
+
+	recovered       atomic.Bool // state replay finished; serving is safe
+	checkpointOn    atomic.Bool // background checkpointer configured
+	snapshotCycleOK atomic.Bool // at least one successful snapshot cycle ran
+	lastSnapshotLSN atomic.Int64
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -68,6 +80,9 @@ func NewLedger(cfg Config, w *wal.WAL) (*Ledger, error) {
 	if w.CurrentLSN() == 0 && len(cfg.InitialAccounts) > 0 {
 		var initRecs []wal.Record
 		for _, a := range cfg.InitialAccounts {
+			if err := ValidateAccount(a); err != nil {
+				return nil, fmt.Errorf("initial account %x: %w", a.ID, err)
+			}
 			payload := EncodeAccountPayload(a)
 			initRecs = append(initRecs, wal.Record{Type: wal.RecordTypeAccount, Payload: payload})
 		}
@@ -121,7 +136,78 @@ func NewLedger(cfg Config, w *wal.WAL) (*Ledger, error) {
 		defer l.wg.Done()
 		l.loop.Run(l.ctx)
 	}()
+	l.recovered.Store(true)
+	if cfg.SnapshotInterval > 0 {
+		l.StartCheckpointer(cfg.SnapshotInterval, cfg.MaxSnapshotsKept)
+	}
 	return l, nil
+}
+
+// StartCheckpointer launches the background snapshot loop (C0.5): on every
+// interval it takes a snapshot via TriggerSnapshot — which persists state,
+// prunes old snapshots, and truncates WAL segments below the snapshot LSN —
+// so production WALs stop growing without bound. The first cycle runs
+// immediately (an empty ledger completes the cycle without writing a file).
+// The goroutine shares the Ledger's lifecycle: Close cancels and waits for it
+// before closing the WAL.
+func (l *Ledger) StartCheckpointer(interval time.Duration, maxKept int) {
+	if interval <= 0 || l.checkpointOn.Swap(true) {
+		return
+	}
+	if maxKept <= 0 {
+		maxKept = 3
+	}
+
+	// First cycle runs synchronously so readiness is deterministic by the
+	// time StartCheckpointer returns (an empty ledger completes without a
+	// file); subsequent cycles run on the ticker goroutine.
+	takeSnapshot := func() {
+		lsn, err := l.TriggerSnapshot(context.Background())
+		if err != nil {
+			slog.Warn("background snapshot failed", "error", err)
+			return // cycle not complete; readiness stays false
+		}
+		if lsn > 0 {
+			l.lastSnapshotLSN.Store(lsn)
+			observability.LastSnapshotLSN.Set(float64(lsn))
+		}
+		l.snapshotCycleOK.Store(true)
+	}
+	takeSnapshot()
+
+	l.wg.Add(1)
+	go func() {
+		defer l.wg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-l.ctx.Done():
+				return
+			case <-ticker.C:
+				takeSnapshot()
+			}
+		}
+	}()
+}
+
+// Ready reports whether the node can safely serve traffic: state recovery is
+// complete and, when a checkpointer is configured, at least one snapshot
+// cycle has succeeded (so WAL retention is actually running).
+func (l *Ledger) Ready() bool {
+	if !l.recovered.Load() {
+		return false
+	}
+	if l.checkpointOn.Load() && !l.snapshotCycleOK.Load() {
+		return false
+	}
+	return true
+}
+
+// LastSnapshotLSN reports the snapshot watermark recorded by the background
+// checkpointer (0 when none has been taken).
+func (l *Ledger) LastSnapshotLSN() int64 {
+	return l.lastSnapshotLSN.Load()
 }
 
 func (l *Ledger) IsFollower() bool {
@@ -462,7 +548,12 @@ func (l *Ledger) GetBalance(ctx context.Context, id [16]byte) (core.Uint128, err
 	if err != nil {
 		return core.Uint128{}, err
 	}
-	return core.Balance(acc), nil
+	bal, err := core.Balance(acc)
+	if err != nil {
+		observability.InvariantViolations.Inc()
+		return core.Uint128{}, err
+	}
+	return bal, nil
 }
 
 func (l *Ledger) TriggerSnapshot(ctx context.Context) (int64, error) {
