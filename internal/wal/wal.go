@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -51,6 +52,7 @@ func Open(dir string, segmentSize int64) (*WAL, error) {
 }
 
 // AppendBatch serializes all records and appends them to segments.
+// It assigns a monotonic LSN to each record and appends a BatchCommit record at the end.
 // It does not call fsync; call Sync exactly once after this for group commit.
 func (w *WAL) AppendBatch(records []Record) (int64, error) {
 	if len(records) == 0 {
@@ -58,8 +60,10 @@ func (w *WAL) AppendBatch(records []Record) (int64, error) {
 	}
 
 	startLSN := w.currentLSN + 1
-	for _, rec := range records {
-		encoded, err := EncodeRecord(rec)
+	for i := range records {
+		w.currentLSN++
+		records[i].LSN = uint64(w.currentLSN)
+		encoded, err := EncodeRecord(records[i])
 		if err != nil {
 			return 0, err
 		}
@@ -86,7 +90,29 @@ func (w *WAL) AppendBatch(records []Record) (int64, error) {
 		}
 	}
 
+	// Append BatchCommit marker record to frame the batch atomically
 	w.currentLSN++
+	var commitPayload [12]byte
+	binary.BigEndian.PutUint64(commitPayload[0:8], uint64(w.currentLSN))
+	binary.BigEndian.PutUint32(commitPayload[8:12], uint32(len(records)))
+	commitRec := Record{
+		LSN:     uint64(w.currentLSN),
+		Type:    RecordTypeBatchCommit,
+		Payload: commitPayload[:],
+	}
+	encodedCommit, err := EncodeRecord(commitRec)
+	if err != nil {
+		return 0, err
+	}
+	if w.current.IsFull(len(encodedCommit)) {
+		if err := w.Rotate(); err != nil {
+			return 0, err
+		}
+	}
+	if _, err := w.current.Write(encodedCommit); err != nil {
+		return 0, err
+	}
+
 	return startLSN, nil
 }
 
@@ -133,9 +159,49 @@ func (w *WAL) TruncateBefore(lsn int64) error {
 			continue // Do not delete active current segment
 		}
 		path := filepath.Join(w.dir, fmt.Sprintf("wal-%06d.seg", id))
-		_ = os.Remove(path)
+		maxLSN, err := peekSegmentMaxLSN(path)
+		if err != nil || maxLSN < lsn {
+			_ = os.Remove(path)
+		}
 	}
 	return nil
+}
+
+func peekSegmentMaxLSN(path string) (int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil || stat.Size() < int64(RecordHeaderSize+RecordCRCSize) {
+		return 0, err
+	}
+
+	// Read last record header if possible, or scan
+	buf := make([]byte, stat.Size())
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return 0, err
+	}
+
+	var maxLSN int64
+	offset := int64(0)
+	size := stat.Size()
+	for offset < size {
+		if size-offset < int64(RecordHeaderSize+RecordCRCSize) {
+			break
+		}
+		lsn := int64(binary.BigEndian.Uint64(buf[offset : offset+8]))
+		payloadLen := int64(binary.BigEndian.Uint32(buf[offset+9 : offset+13]))
+		recLen := int64(RecordHeaderSize) + payloadLen + int64(RecordCRCSize)
+		if payloadLen < 0 || recLen <= 0 || offset+recLen > size {
+			break
+		}
+		maxLSN = lsn
+		offset += recLen
+	}
+	return maxLSN, nil
 }
 
 func (w *WAL) Rotate() error {

@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	RecordHeaderSize = 5 // 1 byte type + 4 bytes payload length
+	RecordHeaderSize = 13 // 8 bytes LSN + 1 byte type + 4 bytes payload length
 	RecordCRCSize    = 4
 )
 
@@ -21,12 +21,14 @@ var (
 type RecordType uint8
 
 const (
-	RecordTypeTransfer   RecordType = 1
-	RecordTypeAccount    RecordType = 2
-	RecordTypeCheckpoint RecordType = 3
+	RecordTypeTransfer    RecordType = 1
+	RecordTypeAccount     RecordType = 2
+	RecordTypeCheckpoint  RecordType = 3
+	RecordTypeBatchCommit RecordType = 4
 )
 
 type Record struct {
+	LSN     uint64
 	Type    RecordType
 	Payload []byte
 }
@@ -41,12 +43,13 @@ func EncodeRecord(r Record) ([]byte, error) {
 
 	frameLen := RecordHeaderSize + len(r.Payload) + RecordCRCSize
 	out := make([]byte, frameLen)
-	out[0] = byte(r.Type)
-	binary.BigEndian.PutUint32(out[1:5], uint32(len(r.Payload)))
-	copy(out[5:5+len(r.Payload)], r.Payload)
+	binary.BigEndian.PutUint64(out[0:8], r.LSN)
+	out[8] = byte(r.Type)
+	binary.BigEndian.PutUint32(out[9:13], uint32(len(r.Payload)))
+	copy(out[13:13+len(r.Payload)], r.Payload)
 
-	checksum := crc32.ChecksumIEEE(out[:5+len(r.Payload)])
-	binary.BigEndian.PutUint32(out[5+len(r.Payload):], checksum)
+	checksum := crc32.ChecksumIEEE(out[:13+len(r.Payload)])
+	binary.BigEndian.PutUint32(out[13+len(r.Payload):], checksum)
 
 	return out, nil
 }
@@ -56,12 +59,13 @@ func DecodeRecord(frame []byte) (Record, error) {
 		return Record{}, ErrCorrupted
 	}
 
-	rt := RecordType(frame[0])
+	lsn := binary.BigEndian.Uint64(frame[0:8])
+	rt := RecordType(frame[8])
 	if rt == 0 {
 		return Record{}, ErrCorrupted
 	}
 
-	payloadLen := int(binary.BigEndian.Uint32(frame[1:5]))
+	payloadLen := int(binary.BigEndian.Uint32(frame[9:13]))
 	expectedLen := RecordHeaderSize + payloadLen + RecordCRCSize
 	if payloadLen < 0 || len(frame) != expectedLen {
 		return Record{}, ErrCorrupted
@@ -76,5 +80,5 @@ func DecodeRecord(frame []byte) (Record, error) {
 	payload := make([]byte, payloadLen)
 	copy(payload, frame[RecordHeaderSize:RecordHeaderSize+payloadLen])
 
-	return Record{Type: rt, Payload: payload}, nil
+	return Record{LSN: lsn, Type: rt, Payload: payload}, nil
 }

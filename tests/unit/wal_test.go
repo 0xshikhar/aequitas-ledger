@@ -134,7 +134,9 @@ func TestWALRecoverTruncatedTail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat recovered segment: %v", err)
 	}
-	expectedSize := int64((n - 1) * (1 + 4 + 8 + 4))
+	recordFrameLen := wal.RecordHeaderSize + 8 + wal.RecordCRCSize
+	commitFrameLen := wal.RecordHeaderSize + 12 + wal.RecordCRCSize
+	expectedSize := int64((n - 1) * (recordFrameLen + commitFrameLen))
 	if st2.Size() != expectedSize {
 		t.Fatalf("segment not truncated to last valid record: got=%d want=%d", st2.Size(), expectedSize)
 	}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 )
 
 func recoverSegments(dir string, handler func(Record) error) (recoveredLSN int64, lastSegmentID int, err error) {
@@ -27,12 +26,14 @@ func recoverSegments(dir string, handler func(Record) error) (recoveredLSN int64
 			return 0, 0, fmt.Errorf("open segment %s for recovery: %w", path, err)
 		}
 
-		stop, recs, truncOffset, rerr := replaySegment(f, handler)
+		stop, segLSN, truncOffset, rerr := replaySegment(f, handler)
 		_ = f.Close()
 		if rerr != nil {
 			return 0, 0, rerr
 		}
-		recoveredLSN += recs
+		if segLSN > recoveredLSN {
+			recoveredLSN = segLSN
+		}
 
 		if stop {
 			if err := truncateSegment(path, truncOffset); err != nil {
@@ -60,7 +61,7 @@ func recoverSegments(dir string, handler func(Record) error) (recoveredLSN int64
 // - stop=true if a truncated/corrupted tail is found
 // - records replayed count
 // - truncate offset when stop=true
-func replaySegment(f *os.File, handler func(Record) error) (stop bool, records int64, truncateOffset int64, err error) {
+func replaySegment(f *os.File, handler func(Record) error) (stop bool, highestLSN int64, truncateOffset int64, err error) {
 	stat, err := f.Stat()
 	if err != nil {
 		return false, 0, 0, fmt.Errorf("stat segment: %w", err)
@@ -76,66 +77,83 @@ func replaySegment(f *os.File, handler func(Record) error) (stop bool, records i
 	}
 
 	offset := int64(0)
+	lastCommittedOffset := int64(0)
+	var pendingBatch []Record
+
 	for offset < size {
-		if size-offset < RecordHeaderSize+RecordCRCSize {
-			return true, records, offset, nil
+		if size-offset < int64(RecordHeaderSize+RecordCRCSize) {
+			return true, highestLSN, lastCommittedOffset, nil
 		}
 
-		payloadLen := int64(binary.BigEndian.Uint32(data[offset+1 : offset+5]))
+		payloadLen := int64(binary.BigEndian.Uint32(data[offset+9 : offset+13]))
 		recLen := int64(RecordHeaderSize) + payloadLen + int64(RecordCRCSize)
 		if payloadLen < 0 || recLen <= 0 || offset+recLen > size {
-			return true, records, offset, nil
+			return true, highestLSN, lastCommittedOffset, nil
 		}
 
 		raw := data[offset : offset+recLen]
 		rec, err := DecodeRecord(raw)
 		if err != nil {
 			if errors.Is(err, ErrCorrupted) {
-				lastValid, derr := detectTruncation(data)
-				if derr != nil {
-					return false, 0, 0, derr
-				}
-				return true, records, lastValid, nil
+				return true, highestLSN, lastCommittedOffset, nil
 			}
-			return false, records, 0, err
+			return false, highestLSN, 0, err
 		}
 
-		if err := replayRecord(rec, handler); err != nil {
-			return false, records, 0, err
+		if rec.Type == RecordTypeBatchCommit {
+			var expectedCount uint32
+			if len(rec.Payload) >= 12 {
+				expectedCount = binary.BigEndian.Uint32(rec.Payload[8:12])
+			}
+			if len(pendingBatch) == int(expectedCount) {
+				for _, pendingRec := range pendingBatch {
+					if err := replayRecord(pendingRec, handler); err != nil {
+						return false, highestLSN, 0, err
+					}
+				}
+				highestLSN = int64(rec.LSN)
+				lastCommittedOffset = offset + recLen
+			}
+			pendingBatch = pendingBatch[:0]
+		} else {
+			pendingBatch = append(pendingBatch, rec)
 		}
-		records++
+
 		offset += recLen
 	}
 
-	return false, records, 0, nil
+	// Any uncommitted batch at end of file gets truncated
+	if len(pendingBatch) > 0 {
+		return true, highestLSN, lastCommittedOffset, nil
+	}
+
+	return false, highestLSN, lastCommittedOffset, nil
 }
 
 // detectTruncation returns the last valid offset in a segment-like byte slice.
 func detectTruncation(data []byte) (int64, error) {
-	type span struct{ start, end int64 }
-	spans := make([]span, 0, 64)
 	offset := int64(0)
+	lastValid := int64(0)
 	size := int64(len(data))
 	for offset < size {
-		if size-offset < RecordHeaderSize+RecordCRCSize {
+		if size-offset < int64(RecordHeaderSize+RecordCRCSize) {
 			break
 		}
-		payloadLen := int64(binary.BigEndian.Uint32(data[offset+1 : offset+5]))
+		payloadLen := int64(binary.BigEndian.Uint32(data[offset+9 : offset+13]))
 		recLen := int64(RecordHeaderSize) + payloadLen + int64(RecordCRCSize)
 		if payloadLen < 0 || recLen <= 0 || offset+recLen > size {
 			break
 		}
-		if _, err := DecodeRecord(data[offset : offset+recLen]); err != nil {
+		rec, err := DecodeRecord(data[offset : offset+recLen])
+		if err != nil {
 			break
 		}
-		spans = append(spans, span{start: offset, end: offset + recLen})
+		if rec.Type == RecordTypeBatchCommit {
+			lastValid = offset + recLen
+		}
 		offset += recLen
 	}
-	if len(spans) == 0 {
-		return 0, nil
-	}
-	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
-	return spans[len(spans)-1].end, nil
+	return lastValid, nil
 }
 
 func replayRecord(rec Record, handler func(Record) error) error {
