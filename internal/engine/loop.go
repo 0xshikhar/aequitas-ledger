@@ -15,6 +15,7 @@ type SnapshotRequest struct {
 
 type SnapshotView struct {
 	Accounts []core.Account
+	Pendings []core.Transfer
 	LSN      int64
 }
 
@@ -49,19 +50,19 @@ func NewEventLoop(b *Batcher, a *AccountManager, w *wal.WAL) *EventLoop {
 	}
 }
 
-func (l *EventLoop) RequestSnapshotView() ([]core.Account, int64) {
+func (l *EventLoop) RequestSnapshotView() ([]core.Account, []core.Transfer, int64) {
 	req := SnapshotRequest{Result: make(chan SnapshotView, 1)}
 	select {
 	case l.snapshotRequests <- req:
 		select {
 		case view := <-req.Result:
-			return view.Accounts, view.LSN
+			return view.Accounts, view.Pendings, view.LSN
 		case <-l.closed:
 			// Loop exited before servicing the request.
-			return nil, 0
+			return nil, nil, 0
 		}
 	case <-l.closed:
-		return nil, 0
+		return nil, nil, 0
 	}
 }
 
@@ -76,6 +77,20 @@ func (l *EventLoop) Run(ctx context.Context) {
 		}
 
 		l.drainControl()
+
+		// Idle: block on every real wakeup source — producer arrivals,
+		// reads, account creates, snapshot views, shutdown. This replaced
+		// the busy-spin with a zero-CPU, zero-latency wait (S2.1).
+		if l.batcher.Idle() {
+			if !l.waitForWork(ctx) {
+				l.abandonPending()
+				return
+			}
+			l.drainControl()
+			if l.batcher.Idle() {
+				continue
+			}
+		}
 
 		// Idle: block on every real wakeup source — producer arrivals,
 		// reads, account creates, snapshot views, shutdown. This replaced
@@ -180,8 +195,9 @@ func (l *EventLoop) drainControl() {
 		select {
 		case req := <-l.snapshotRequests:
 			accs := l.accounts.Snapshot()
-			req.Result <- SnapshotView{Accounts: accs, LSN: l.currentLSN}
+			req.Result <- SnapshotView{Accounts: accs, Pendings: l.accounts.PendingTransfers(), LSN: l.currentLSN}
 		case req := <-l.readQueue:
+			l.handleRead(req)
 			l.handleRead(req)
 		case req := <-l.accountCreateQueue:
 			l.processAccountCreate(req)
@@ -199,6 +215,8 @@ func (l *EventLoop) processAccountCreate(req AccountCreateEvent) {
 	// they fail per-item.
 	l.recordsBuf = l.recordsBuf[:0]
 	l.payloadBuf = l.payloadBuf[:0]
+	l.recordsBuf = l.recordsBuf[:0]
+	l.payloadBuf = l.payloadBuf[:0]
 	var walIdx []int
 	for i := range req.Accounts {
 		if err := ValidateAccount(req.Accounts[i]); err != nil {
@@ -212,8 +230,12 @@ func (l *EventLoop) processAccountCreate(req AccountCreateEvent) {
 		mark := len(l.payloadBuf)
 		l.payloadBuf = core.AppendAccountPayload(l.payloadBuf, req.Accounts[i])
 		l.recordsBuf = append(l.recordsBuf, wal.Record{Type: wal.RecordTypeAccount, Payload: l.payloadBuf[mark:]})
+		mark := len(l.payloadBuf)
+		l.payloadBuf = core.AppendAccountPayload(l.payloadBuf, req.Accounts[i])
+		l.recordsBuf = append(l.recordsBuf, wal.Record{Type: wal.RecordTypeAccount, Payload: l.payloadBuf[mark:]})
 		walIdx = append(walIdx, i)
 	}
+	recs := l.recordsBuf
 	recs := l.recordsBuf
 	if len(recs) == 0 {
 		close(req.Done)
@@ -246,7 +268,14 @@ func (l *EventLoop) processBatch(events []TransferEvent) {
 	nEvents := len(events)
 	observability.BatchSize.Observe(float64(nEvents))
 
+	// Batch clock (D1.2): one timestamp per batch, driving hold expiry on
+	// the logical clock so replay decisions match live ones exactly.
+	l.clock = time.Now().UnixNano()
+	l.accounts.SetClock(l.clock)
+	l.accounts.CloseExpired()
+
 	outcomes := ValidateBatch(events, l.accounts)
+	records := l.makeWALRecords(events, outcomes)
 	records := l.makeWALRecords(events, outcomes)
 
 	if len(records) > 0 {
@@ -299,13 +328,18 @@ func (l *EventLoop) makeWALRecords(events []TransferEvent, outcomes []error) []w
 		}
 		t := events[i].Transfer
 		if t.Timestamp == 0 {
-			t.Timestamp = now
-			now++
+			// Batch-level timestamp: the batch clock drives hold expiry, and
+			// replay reconstructs the same clock from this field.
+			t.Timestamp = l.clock
 		}
+		mark := len(l.payloadBuf)
+		l.payloadBuf = core.AppendTransferPayload(l.payloadBuf, t)
+		l.recordsBuf = append(l.recordsBuf, wal.Record{Type: wal.RecordTypeTransfer, Payload: l.payloadBuf[mark:]})
 		mark := len(l.payloadBuf)
 		l.payloadBuf = core.AppendTransferPayload(l.payloadBuf, t)
 		l.recordsBuf = append(l.recordsBuf, wal.Record{Type: wal.RecordTypeTransfer, Payload: l.payloadBuf[mark:]})
 		events[i].Transfer = t
 	}
+	return l.recordsBuf
 	return l.recordsBuf
 }

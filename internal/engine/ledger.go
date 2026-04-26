@@ -96,10 +96,18 @@ func NewLedger(cfg Config, w *wal.WAL) (*Ledger, error) {
 
 	var snapshotLSN int64 = 0
 	if latestPath, _, err := snapshot.Latest(snapshotDir); err == nil && latestPath != "" {
-		snapAccounts, snapLSNRead, rerr := snapshot.Read(latestPath)
+		snapAccounts, snapPendings, snapLSNRead, rerr := snapshot.Read(latestPath)
 		if rerr == nil {
 			for _, a := range snapAccounts {
 				_ = accounts.Create(a)
+			}
+			for _, p := range snapPendings {
+				if err := accounts.RestorePending(p); err != nil {
+					return nil, fmt.Errorf("restore pending transfer: %w", err)
+				}
+				if p.Timestamp > accounts.clock {
+					accounts.clock = p.Timestamp
+				}
 			}
 			snapshotLSN = snapLSNRead
 		}
@@ -560,12 +568,12 @@ func (l *Ledger) TriggerSnapshot(ctx context.Context) (int64, error) {
 	if l.loop == nil {
 		return 0, nil
 	}
-	accs, lsn := l.loop.RequestSnapshotView()
+	accs, pendings, lsn := l.loop.RequestSnapshotView()
 	if lsn <= 0 {
 		return 0, nil
 	}
 	snapPath := filepath.Join(l.snapshotDir, fmt.Sprintf("snapshot-%d.snap", lsn))
-	if err := snapshot.Write(snapPath, lsn, accs); err != nil {
+	if err := snapshot.Write(snapPath, lsn, accs, pendings); err != nil {
 		return 0, fmt.Errorf("write snapshot: %w", err)
 	}
 	_ = snapshot.CleanupOldSnapshots(l.snapshotDir, 3)
@@ -598,11 +606,15 @@ func (l *Ledger) RecoverFromSnapshot(fromLSN int64) error {
 			if err != nil {
 				return err
 			}
-			events := []TransferEvent{{Transfer: t}}
-			outcomes := []error{nil}
-			ApplyBatch(events, outcomes, l.accounts)
-			if outcomes[0] != nil {
-				return outcomes[0]
+			// Replay advances the logical clock and closes expired holds
+			// exactly as the live loop did, before applying.
+			if t.Timestamp > l.accounts.clock {
+				l.accounts.clock = t.Timestamp
+			}
+			l.accounts.SetClock(l.accounts.clock)
+			l.accounts.CloseExpired()
+			if err := ApplyTransferState(l.accounts, t); err != nil {
+				return err
 			}
 			if t.IdempotencyKey != [32]byte{} {
 				l.idempKey.Commit(t.IdempotencyKey, t)

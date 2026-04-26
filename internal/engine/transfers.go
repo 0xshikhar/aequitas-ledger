@@ -1,10 +1,12 @@
 package engine
 
 import (
-	"aequitas-ledger/internal/core"
 	"aequitas-ledger/internal/observability"
 )
 
+// ValidateBatch performs the flag-aware pre-flight check per event. Only
+// events that pass are journaled; ApplyTransferState re-runs the identical
+// check before mutating (one rules implementation, two call sites).
 func ValidateBatch(events []TransferEvent, accounts *AccountManager) []error {
 	outcomes := make([]error, len(events))
 	for i := range events {
@@ -13,35 +15,17 @@ func ValidateBatch(events []TransferEvent, accounts *AccountManager) []error {
 	return outcomes
 }
 
+// ApplyBatch applies pre-validated events to the state machine in strict
+// slice order. The WAL is already durable by the time this runs; any failure
+// here is a state-machine-level rejection (the record replays identically).
 func ApplyBatch(events []TransferEvent, outcomes []error, accounts *AccountManager) {
 	for i := range events {
 		if outcomes[i] != nil {
 			continue
 		}
-		t := events[i].Transfer
-
-		debitAcc, err := accounts.Get(t.DebitAccountID)
-		if err != nil {
+		if err := ApplyTransferState(accounts, events[i].Transfer); err != nil {
 			outcomes[i] = err
-			continue
-		}
-		bal, err := core.Balance(*debitAcc)
-		if err != nil {
 			observability.InvariantViolations.Inc()
-			outcomes[i] = err
-			continue
-		}
-		if core.Cmp(bal, t.Amount) < 0 {
-			outcomes[i] = core.ErrInsufficientFunds{AccountID: t.DebitAccountID, Balance: bal, Amount: t.Amount}
-			continue
-		}
-
-		if err := accounts.ApplyDebit(t.DebitAccountID, t.Amount); err != nil {
-			outcomes[i] = err
-			continue
-		}
-		if err := accounts.ApplyCredit(t.CreditAccountID, t.Amount); err != nil {
-			outcomes[i] = err
 		}
 	}
 }
