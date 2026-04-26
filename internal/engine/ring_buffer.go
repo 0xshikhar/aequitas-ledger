@@ -9,7 +9,7 @@ import (
 
 type RingBuffer struct {
 	buf   []TransferEvent
-	ready []uint64
+	ready []atomic.Uint64
 	mask  uint64
 	cap   uint64
 
@@ -25,7 +25,7 @@ func NewRingBuffer(size int) *RingBuffer {
 	}
 	rb := &RingBuffer{
 		buf:   make([]TransferEvent, size),
-		ready: make([]uint64, size),
+		ready: make([]atomic.Uint64, size),
 		mask:  uint64(size - 1),
 		cap:   uint64(size),
 	}
@@ -43,7 +43,7 @@ func (rb *RingBuffer) Submit(ev TransferEvent) error {
 		if rb.head.CompareAndSwap(h, h+1) {
 			idx := h & rb.mask
 			rb.buf[idx] = ev
-			rb.ready[idx] = h + 1
+			rb.ready[idx].Store(h + 1)
 			return nil
 		}
 		runtime.Gosched()
@@ -63,7 +63,7 @@ func (rb *RingBuffer) DrainBatch(max int) []TransferEvent {
 	for len(out) < max && rb.tail < head {
 		idx := rb.tail & rb.mask
 		wantReady := rb.tail + 1
-		if rb.ready[idx] != wantReady {
+		if rb.ready[idx].Load() != wantReady {
 			break
 		}
 		out = append(out, rb.buf[idx])
