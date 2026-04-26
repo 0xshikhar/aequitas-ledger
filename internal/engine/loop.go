@@ -19,19 +19,23 @@ type SnapshotView struct {
 }
 
 type EventLoop struct {
-	batcher          *Batcher
-	accounts         *AccountManager
-	wal              *wal.WAL
-	currentLSN       int64
-	snapshotRequests chan SnapshotRequest
+	batcher            *Batcher
+	accounts           *AccountManager
+	wal                *wal.WAL
+	currentLSN         int64
+	snapshotRequests   chan SnapshotRequest
+	readQueue          chan ReadAccountEvent
+	accountCreateQueue chan AccountCreateEvent
 }
 
 func NewEventLoop(b *Batcher, a *AccountManager, w *wal.WAL) *EventLoop {
 	return &EventLoop{
-		batcher:          b,
-		accounts:         a,
-		wal:              w,
-		snapshotRequests: make(chan SnapshotRequest, 10),
+		batcher:            b,
+		accounts:           a,
+		wal:                w,
+		snapshotRequests:   make(chan SnapshotRequest, 10),
+		readQueue:          make(chan ReadAccountEvent, 1024),
+		accountCreateQueue: make(chan AccountCreateEvent, 256),
 	}
 }
 
@@ -50,6 +54,15 @@ func (l *EventLoop) Run(ctx context.Context) {
 		case req := <-l.snapshotRequests:
 			accs := l.accounts.Snapshot()
 			req.Result <- SnapshotView{Accounts: accs, LSN: l.currentLSN}
+		case req := <-l.readQueue:
+			acc, err := l.accounts.Get(req.ID)
+			var a core.Account
+			if acc != nil {
+				a = *acc
+			}
+			req.Result <- ReadAccountResult{Account: a, Err: err}
+		case req := <-l.accountCreateQueue:
+			l.processAccountCreate(req)
 		default:
 		}
 
@@ -59,6 +72,27 @@ func (l *EventLoop) Run(ctx context.Context) {
 		}
 		l.processBatch(batch)
 	}
+}
+
+func (l *EventLoop) processAccountCreate(req AccountCreateEvent) {
+	if _, err := l.accounts.Get(req.Account.ID); err == nil {
+		req.Result <- core.ErrDuplicateAccountID{AccountID: req.Account.ID}
+		return
+	}
+
+	payload := encodeAccountPayload(req.Account)
+	rec := wal.Record{Type: wal.RecordTypeAccount, Payload: payload}
+	if _, err := l.wal.AppendBatch([]wal.Record{rec}); err != nil {
+		req.Result <- err
+		return
+	}
+	if err := l.wal.Sync(); err != nil {
+		req.Result <- err
+		return
+	}
+	l.currentLSN = l.wal.CurrentLSN()
+	err := l.accounts.Create(req.Account)
+	req.Result <- err
 }
 
 func (l *EventLoop) processBatch(events []TransferEvent) {

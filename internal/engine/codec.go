@@ -55,3 +55,48 @@ func decodeTransferPayload(b []byte) (core.Transfer, error) {
 	t.Flags = binary.BigEndian.Uint32(b[off : off+4])
 	return t, nil
 }
+
+const accountPayloadSize = 64
+
+var errInvalidAccountPayload = errors.New("engine: invalid account payload")
+
+func encodeAccountPayload(a core.Account) []byte {
+	b := make([]byte, accountPayloadSize)
+	off := 0
+	copy(b[off:off+16], a.ID[:])
+	off += 16
+	copy(b[off:off+4], a.Currency[:])
+	off += 4
+	copy(b[off:off+16], core.MarshalBinary(a.PostedDebits))
+	off += 16
+	copy(b[off:off+16], core.MarshalBinary(a.PostedCredits))
+	off += 16
+	binary.BigEndian.PutUint32(b[off:off+4], a.Flags)
+	return b
+}
+
+func decodeAccountPayload(b []byte) (core.Account, error) {
+	if len(b) != accountPayloadSize {
+		return core.Account{}, errInvalidAccountPayload
+	}
+	var a core.Account
+	off := 0
+	copy(a.ID[:], b[off:off+16])
+	off += 16
+	copy(a.Currency[:], b[off:off+4])
+	off += 4
+	debits, err := core.UnmarshalBinary(b[off : off+16])
+	if err != nil {
+		return core.Account{}, err
+	}
+	a.PostedDebits = debits
+	off += 16
+	credits, err := core.UnmarshalBinary(b[off : off+16])
+	if err != nil {
+		return core.Account{}, err
+	}
+	a.PostedCredits = credits
+	off += 16
+	a.Flags = binary.BigEndian.Uint32(b[off : off+4])
+	return a, nil
+}

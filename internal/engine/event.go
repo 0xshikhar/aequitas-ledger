@@ -15,3 +15,13 @@ type AccountCreateEvent struct {
 	Account core.Account
 	Result  chan error
 }
+
+type ReadAccountEvent struct {
+	ID     [16]byte
+	Result chan ReadAccountResult
+}
+
+type ReadAccountResult struct {
+	Account core.Account
+	Err     error
+}

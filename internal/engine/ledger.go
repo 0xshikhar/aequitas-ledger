@@ -132,28 +132,42 @@ func (l *Ledger) CreateTransfer(ctx context.Context, t core.Transfer) (core.Tran
 }
 
 func (l *Ledger) CreateAccount(ctx context.Context, acc core.Account) (core.Account, error) {
+	resChan := make(chan error, 1)
+	ev := AccountCreateEvent{Account: acc, Result: resChan}
+
 	select {
+	case l.loop.accountCreateQueue <- ev:
 	case <-ctx.Done():
 		return core.Account{}, ctx.Err()
-	default:
 	}
-	if err := l.accounts.Create(acc); err != nil {
-		return core.Account{}, err
+
+	select {
+	case err := <-resChan:
+		if err != nil {
+			return core.Account{}, err
+		}
+		return acc, nil
+	case <-ctx.Done():
+		return core.Account{}, ctx.Err()
 	}
-	return acc, nil
 }
 
 func (l *Ledger) GetAccount(ctx context.Context, id [16]byte) (core.Account, error) {
+	resChan := make(chan ReadAccountResult, 1)
+	ev := ReadAccountEvent{ID: id, Result: resChan}
+
 	select {
+	case l.loop.readQueue <- ev:
 	case <-ctx.Done():
 		return core.Account{}, ctx.Err()
-	default:
 	}
-	acc, err := l.accounts.Get(id)
-	if err != nil {
-		return core.Account{}, err
+
+	select {
+	case res := <-resChan:
+		return res.Account, res.Err
+	case <-ctx.Done():
+		return core.Account{}, ctx.Err()
 	}
-	return *acc, nil
 }
 
 func (l *Ledger) GetBalance(ctx context.Context, id [16]byte) (core.Uint128, error) {
@@ -166,16 +180,30 @@ func (l *Ledger) GetBalance(ctx context.Context, id [16]byte) (core.Uint128, err
 
 func (l *Ledger) Recover() error {
 	return l.wal.Recover(func(r wal.Record) error {
-		if r.Type != wal.RecordTypeTransfer {
+		switch r.Type {
+		case wal.RecordTypeAccount:
+			acc, err := decodeAccountPayload(r.Payload)
+			if err != nil {
+				return err
+			}
+			return l.accounts.Create(acc)
+		case wal.RecordTypeTransfer:
+			t, err := decodeTransferPayload(r.Payload)
+			if err != nil {
+				return err
+			}
+			events := []TransferEvent{{Transfer: t}}
+			outcomes := []error{nil}
+			ApplyBatch(events, outcomes, l.accounts)
+			if outcomes[0] != nil {
+				return outcomes[0]
+			}
+			if t.IdempotencyKey != [32]byte{} {
+				l.idempKey.Commit(t.IdempotencyKey, t)
+			}
+			return nil
+		default:
 			return nil
 		}
-		t, err := decodeTransferPayload(r.Payload)
-		if err != nil {
-			return err
-		}
-		events := []TransferEvent{{Transfer: t}}
-		outcomes := []error{nil}
-		ApplyBatch(events, outcomes, l.accounts)
-		return outcomes[0]
 	})
 }
