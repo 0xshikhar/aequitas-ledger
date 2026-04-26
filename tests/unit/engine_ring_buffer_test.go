@@ -56,3 +56,26 @@ func TestRingBufferConcurrentSubmitNoLossNoDup(t *testing.T) {
 		t.Fatalf("lost events: got=%d want=%d", recv, total)
 	}
 }
+
+// S2.1: a consumer blocked on the arrival channel must wake when a producer
+// publishes — this is what replaced the event loop's idle busy-spin.
+func TestRingBufferArrivalWakeup(t *testing.T) {
+	rb, _ := engine.NewRingBuffer(1 << 10)
+
+	woken := make(chan struct{})
+	go func() {
+		ch := rb.ArriveChanForTest()
+		<-ch
+		close(woken)
+	}()
+
+	time.Sleep(50 * time.Millisecond) // let the consumer register
+	if err := rb.Submit(engine.NewTransferEvent(core.Transfer{ID: id16(1), Amount: core.FromUint64(1)})); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	select {
+	case <-woken:
+	case <-time.After(2 * time.Second):
+		t.Fatal("consumer was not woken by the producer's arrival signal")
+	}
+}
