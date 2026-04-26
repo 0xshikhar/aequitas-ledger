@@ -69,6 +69,16 @@ func (rb *RingBuffer) Submit(ev TransferEvent) error {
 func (rb *RingBuffer) arriveChan() <-chan struct{} {
 	rb.notifyMu.Lock()
 	defer rb.notifyMu.Unlock()
+	if rb.head.Load() > rb.tailShared.Load() {
+		if rb.arrive != nil {
+			close(rb.arrive)
+			rb.arrive = nil
+		}
+		rb.waiting.Store(false)
+		closedCh := make(chan struct{})
+		close(closedCh)
+		return closedCh
+	}
 	if rb.arrive == nil {
 		rb.arrive = make(chan struct{})
 	}
@@ -79,12 +89,8 @@ func (rb *RingBuffer) arriveChan() <-chan struct{} {
 // ArriveChanForTest exposes the arrival channel to external tests.
 func (rb *RingBuffer) ArriveChanForTest() <-chan struct{} { return rb.arriveChan() }
 
-// signalArrived wakes a blocked consumer, if one is waiting. Fast path: a
-// single atomic load when nobody waits.
+// signalArrived wakes a blocked consumer, if one is waiting.
 func (rb *RingBuffer) signalArrived() {
-	if !rb.waiting.Load() {
-		return
-	}
 	rb.notifyMu.Lock()
 	if rb.arrive != nil {
 		close(rb.arrive)

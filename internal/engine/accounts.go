@@ -76,6 +76,11 @@ func (m *AccountManager) SetClock(nanos int64) {
 	m.clock = nanos
 }
 
+// Clock returns the current logical clock timestamp in nanoseconds.
+func (m *AccountManager) Clock() int64 {
+	return m.clock
+}
+
 // CloseExpired voids every pending transfer whose deadline has passed on the
 // logical clock. Derived state — no journal records — so replay reproduces
 // the exact same closures.

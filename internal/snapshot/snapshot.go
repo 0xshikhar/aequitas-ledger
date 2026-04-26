@@ -135,18 +135,21 @@ func Read(path string) ([]core.Account, []core.Transfer, int64, error) {
 	lsn := int64(binary.BigEndian.Uint64(data[8:16]))
 	count := binary.BigEndian.Uint64(data[16:24])
 
-	pendingCount := binary.BigEndian.Uint64(data[24:32])
-	expectedPayloadLen := 8 + 8 + 8 + 8 + (count * AccountSize) + (pendingCount * core.TransferPayloadSize)
+	pendCountOff := 24 + (count * AccountSize)
+	if uint64(len(content)) < pendCountOff+8 {
+		return nil, nil, 0, ErrInvalidSnapshotSize
+	}
+
+	pendingCount := binary.BigEndian.Uint64(data[pendCountOff : pendCountOff+8])
+	expectedPayloadLen := pendCountOff + 8 + (pendingCount * core.TransferPayloadSize)
 	if uint64(len(content)) != expectedPayloadLen {
 		return nil, nil, 0, ErrInvalidSnapshotSize
 	}
 
 	accounts := make([]core.Account, count)
-	payload := data[32:]
-
 	for i := uint64(0); i < count; i++ {
-		offset := i * AccountSize
-		acc, err := core.DecodeAccountPayload(payload[offset : offset+AccountSize])
+		offset := 24 + (i * AccountSize)
+		acc, err := core.DecodeAccountPayload(data[offset : offset+AccountSize])
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("decode snapshot account %d: %w", i, err)
 		}
@@ -154,14 +157,14 @@ func Read(path string) ([]core.Account, []core.Transfer, int64, error) {
 	}
 
 	pendings := make([]core.Transfer, pendingCount)
-	pendOff := uint64(count * AccountSize)
+	pendOff := pendCountOff + 8
 	for i := uint64(0); i < pendingCount; i++ {
-		tr, err := core.DecodeTransferPayload(payload[pendOff : pendOff+core.TransferPayloadSize])
+		offset := pendOff + (i * core.TransferPayloadSize)
+		tr, err := core.DecodeTransferPayload(data[offset : offset+core.TransferPayloadSize])
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("decode snapshot pending transfer %d: %w", i, err)
 		}
 		pendings[i] = tr
-		pendOff += core.TransferPayloadSize
 	}
 
 	return accounts, pendings, lsn, nil
