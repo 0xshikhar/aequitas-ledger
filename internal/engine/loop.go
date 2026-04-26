@@ -24,9 +24,12 @@ type EventLoop struct {
 	accounts           *AccountManager
 	wal                *wal.WAL
 	currentLSN         int64
-	snapshotRequests   chan SnapshotRequest
-	readQueue          chan ReadAccountEvent
-	accountCreateQueue chan AccountCreateEvent
+	clock              int64
+	snapshotRequests          chan SnapshotRequest
+	readQueue                 chan ReadAccountEvent
+	readTransferQueue         chan ReadTransferEvent
+	readAccountTransfersQueue chan ReadAccountTransfersEvent
+	accountCreateQueue        chan AccountCreateEvent
 	// closed is closed exactly once when Run exits; callers blocked on loop
 	// round-trips (snapshot views) use it to give up instead of hanging.
 	closed chan struct{}
@@ -43,10 +46,12 @@ func NewEventLoop(b *Batcher, a *AccountManager, w *wal.WAL) *EventLoop {
 		accounts:           a,
 		wal:                w,
 		currentLSN:         w.CurrentLSN(),
-		snapshotRequests:   make(chan SnapshotRequest, 10),
-		readQueue:          make(chan ReadAccountEvent, 1024),
-		accountCreateQueue: make(chan AccountCreateEvent, 256),
-		closed:             make(chan struct{}),
+		snapshotRequests:          make(chan SnapshotRequest, 10),
+		readQueue:                 make(chan ReadAccountEvent, 1024),
+		readTransferQueue:         make(chan ReadTransferEvent, 1024),
+		readAccountTransfersQueue: make(chan ReadAccountTransfersEvent, 1024),
+		accountCreateQueue:        make(chan AccountCreateEvent, 256),
+		closed:                    make(chan struct{}),
 	}
 }
 
@@ -92,20 +97,6 @@ func (l *EventLoop) Run(ctx context.Context) {
 			}
 		}
 
-		// Idle: block on every real wakeup source — producer arrivals,
-		// reads, account creates, snapshot views, shutdown. This replaced
-		// the busy-spin with a zero-CPU, zero-latency wait (S2.1).
-		if l.batcher.Idle() {
-			if !l.waitForWork(ctx) {
-				l.abandonPending()
-				return
-			}
-			l.drainControl()
-			if l.batcher.Idle() {
-				continue
-			}
-		}
-
 		batch := l.batcher.Collect(l.controlPending)
 		l.drainControl()
 		observability.RingBufferDepth.Set(float64(l.batcher.Depth()))
@@ -128,12 +119,18 @@ func (l *EventLoop) waitForWork(ctx context.Context) bool {
 	case req := <-l.readQueue:
 		l.handleRead(req)
 		return true
+	case req := <-l.readTransferQueue:
+		l.handleReadTransfer(req)
+		return true
+	case req := <-l.readAccountTransfersQueue:
+		l.handleReadAccountTransfers(req)
+		return true
 	case req := <-l.accountCreateQueue:
 		l.processAccountCreate(req)
 		return true
 	case req := <-l.snapshotRequests:
 		accs := l.accounts.Snapshot()
-		req.Result <- SnapshotView{Accounts: accs, LSN: l.currentLSN}
+		req.Result <- SnapshotView{Accounts: accs, Pendings: l.accounts.PendingTransfers(), LSN: l.currentLSN}
 		return true
 	}
 }
@@ -147,6 +144,16 @@ func (l *EventLoop) handleRead(req ReadAccountEvent) {
 		a = *acc
 	}
 	req.Result <- ReadAccountResult{Account: a, Err: err}
+}
+
+func (l *EventLoop) handleReadTransfer(req ReadTransferEvent) {
+	t, ok := l.accounts.GetTransfer(req.ID)
+	req.Result <- ReadTransferResult{Transfer: t, Found: ok}
+}
+
+func (l *EventLoop) handleReadAccountTransfers(req ReadAccountTransfersEvent) {
+	ts := l.accounts.AccountTransfers(req.AccountID, req.AfterID, req.Limit)
+	req.Result <- ts
 }
 
 // abandonPending completes every still-queued transfer event with
@@ -185,7 +192,7 @@ func (l *EventLoop) abandonPending() {
 // are queued. The batcher consults it while waiting so the loop can service
 // control work instead of spinning for a fuller batch (C0.16).
 func (l *EventLoop) controlPending() bool {
-	return len(l.readQueue) > 0 || len(l.accountCreateQueue) > 0 || len(l.snapshotRequests) > 0
+	return len(l.readQueue) > 0 || len(l.readTransferQueue) > 0 || len(l.readAccountTransfersQueue) > 0 || len(l.accountCreateQueue) > 0 || len(l.snapshotRequests) > 0
 }
 
 // drainControl services every currently queued control request so read and
@@ -198,7 +205,10 @@ func (l *EventLoop) drainControl() {
 			req.Result <- SnapshotView{Accounts: accs, Pendings: l.accounts.PendingTransfers(), LSN: l.currentLSN}
 		case req := <-l.readQueue:
 			l.handleRead(req)
-			l.handleRead(req)
+		case req := <-l.readTransferQueue:
+			l.handleReadTransfer(req)
+		case req := <-l.readAccountTransfersQueue:
+			l.handleReadAccountTransfers(req)
 		case req := <-l.accountCreateQueue:
 			l.processAccountCreate(req)
 		default:
@@ -215,8 +225,6 @@ func (l *EventLoop) processAccountCreate(req AccountCreateEvent) {
 	// they fail per-item.
 	l.recordsBuf = l.recordsBuf[:0]
 	l.payloadBuf = l.payloadBuf[:0]
-	l.recordsBuf = l.recordsBuf[:0]
-	l.payloadBuf = l.payloadBuf[:0]
 	var walIdx []int
 	for i := range req.Accounts {
 		if err := ValidateAccount(req.Accounts[i]); err != nil {
@@ -230,12 +238,8 @@ func (l *EventLoop) processAccountCreate(req AccountCreateEvent) {
 		mark := len(l.payloadBuf)
 		l.payloadBuf = core.AppendAccountPayload(l.payloadBuf, req.Accounts[i])
 		l.recordsBuf = append(l.recordsBuf, wal.Record{Type: wal.RecordTypeAccount, Payload: l.payloadBuf[mark:]})
-		mark := len(l.payloadBuf)
-		l.payloadBuf = core.AppendAccountPayload(l.payloadBuf, req.Accounts[i])
-		l.recordsBuf = append(l.recordsBuf, wal.Record{Type: wal.RecordTypeAccount, Payload: l.payloadBuf[mark:]})
 		walIdx = append(walIdx, i)
 	}
-	recs := l.recordsBuf
 	recs := l.recordsBuf
 	if len(recs) == 0 {
 		close(req.Done)
@@ -275,7 +279,6 @@ func (l *EventLoop) processBatch(events []TransferEvent) {
 	l.accounts.CloseExpired()
 
 	outcomes := ValidateBatch(events, l.accounts)
-	records := l.makeWALRecords(events, outcomes)
 	records := l.makeWALRecords(events, outcomes)
 
 	if len(records) > 0 {
@@ -321,7 +324,6 @@ func (l *EventLoop) processBatch(events []TransferEvent) {
 func (l *EventLoop) makeWALRecords(events []TransferEvent, outcomes []error) []wal.Record {
 	l.recordsBuf = l.recordsBuf[:0]
 	l.payloadBuf = l.payloadBuf[:0]
-	now := time.Now().UnixNano()
 	for i := range events {
 		if outcomes[i] != nil {
 			continue
@@ -335,11 +337,7 @@ func (l *EventLoop) makeWALRecords(events []TransferEvent, outcomes []error) []w
 		mark := len(l.payloadBuf)
 		l.payloadBuf = core.AppendTransferPayload(l.payloadBuf, t)
 		l.recordsBuf = append(l.recordsBuf, wal.Record{Type: wal.RecordTypeTransfer, Payload: l.payloadBuf[mark:]})
-		mark := len(l.payloadBuf)
-		l.payloadBuf = core.AppendTransferPayload(l.payloadBuf, t)
-		l.recordsBuf = append(l.recordsBuf, wal.Record{Type: wal.RecordTypeTransfer, Payload: l.payloadBuf[mark:]})
 		events[i].Transfer = t
 	}
-	return l.recordsBuf
 	return l.recordsBuf
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"aequitas-ledger/internal/core"
@@ -52,6 +53,7 @@ func (s *RESTServer) registerRoutes() {
 	s.mux.HandleFunc("/v1/accounts/", s.handleGetAccount)
 	s.mux.HandleFunc("/v1/transfers", s.handleCreateTransfer)
 	s.mux.HandleFunc("/v1/transfers/batch", s.handleBatchTransfers)
+	s.mux.HandleFunc("/v1/transfers/", s.handleGetTransfer)
 }
 
 func (s *RESTServer) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -81,11 +83,14 @@ type createAccountReq struct {
 }
 
 type accountResp struct {
-	ID            string `json:"id"`
-	Currency      string `json:"currency"`
-	PostedDebits  string `json:"posted_debits"`
-	PostedCredits string `json:"posted_credits"`
-	Balance       string `json:"balance"`
+	ID               string `json:"id"`
+	Currency         string `json:"currency"`
+	PostedDebits     string `json:"posted_debits"`
+	PostedCredits    string `json:"posted_credits"`
+	PendingDebits    string `json:"pending_debits"`
+	PendingCredits   string `json:"pending_credits"`
+	Balance          string `json:"balance"`
+	AvailableBalance string `json:"available_balance"`
 }
 
 func (s *RESTServer) handleAccounts(w http.ResponseWriter, r *http.Request) {
@@ -160,6 +165,17 @@ func (s *RESTServer) handleGetAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.HasSuffix(idStr, "/transfers") {
+		accIDStr := strings.TrimSuffix(idStr, "/transfers")
+		accID, err := parseHexID(accIDStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid account id")
+			return
+		}
+		s.handleGetAccountTransfers(w, r, accID)
+		return
+	}
+
 	accID, err := parseHexID(idStr)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid account id")
@@ -191,6 +207,8 @@ type createTransferReq struct {
 	CreditAccountID string `json:"credit_account_id"`
 	Amount          string `json:"amount"`
 	IdempotencyKey  string `json:"idempotency_key"`
+	Flags           uint32 `json:"flags,omitempty"`
+	Timeout         uint64 `json:"timeout,omitempty"`
 }
 
 type transferResp struct {
@@ -199,6 +217,9 @@ type transferResp struct {
 	CreditAccountID string `json:"credit_account_id"`
 	Amount          string `json:"amount"`
 	IdempotencyKey  string `json:"idempotency_key"`
+	Flags           uint32 `json:"flags,omitempty"`
+	Timeout         uint64 `json:"timeout,omitempty"`
+	CreatedAt       int64  `json:"created_at,omitempty"`
 }
 
 func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request) {
@@ -231,10 +252,14 @@ func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	amount, err := core.FromString(req.Amount)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid amount")
-		return
+	var amount core.Uint128
+	if req.Amount != "" {
+		var err error
+		amount, err = core.FromString(req.Amount)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid amount")
+			return
+		}
 	}
 
 	idempHeader := r.Header.Get("Idempotency-Key")
@@ -256,6 +281,8 @@ func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request
 		CreditAccountID: creditID,
 		Amount:          amount,
 		IdempotencyKey:  key,
+		Flags:           req.Flags,
+		Timeout:         req.Timeout,
 	}
 
 	res, err := s.ledger.CreateTransfer(r.Context(), tr)
@@ -266,6 +293,21 @@ func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request
 		}
 		if errors.Is(err, core.ErrZeroAmount{}) || errors.Is(err, core.ErrSelfTransfer{}) {
 			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var pendingNotFound core.ErrPendingNotFound
+		if errors.As(err, &pendingNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		var invalidFlags core.ErrInvalidTransferFlags
+		if errors.As(err, &invalidFlags) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var overTransfer core.ErrOverTransfer
+		if errors.As(err, &overTransfer) {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
 		var notFound core.ErrAccountNotFound
@@ -282,13 +324,7 @@ func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, transferResp{
-		ID:              fmt.Sprintf("%x", res.ID[:]),
-		DebitAccountID:  fmt.Sprintf("%x", res.DebitAccountID[:]),
-		CreditAccountID: fmt.Sprintf("%x", res.CreditAccountID[:]),
-		Amount:          core.String(res.Amount),
-		IdempotencyKey:  fmt.Sprintf("%x", res.IdempotencyKey[:]),
-	})
+	writeJSON(w, http.StatusCreated, formatTransferResp(res))
 }
 
 // --- Batch endpoints (D1.1) ----------------------------------------------
@@ -360,8 +396,8 @@ func (s *RESTServer) handleBatchTransfers(w http.ResponseWriter, r *http.Request
 			continue
 		}
 		results[i].OK = true
-		resp := transferResultToResp(outcomes[i].Transfer)
-		results[i].Transfer = &resp
+		tr := formatTransferResp(outcomes[i].Transfer)
+		results[i].Transfer = &tr
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
@@ -396,16 +432,85 @@ func (s *RESTServer) parseTransferReq(req *createTransferReq) (core.Transfer, er
 		CreditAccountID: creditID,
 		Amount:          amount,
 		IdempotencyKey:  key,
+		Flags:           req.Flags,
+		Timeout:         req.Timeout,
 	}, nil
 }
 
-func transferResultToResp(t core.Transfer) transferResp {
+func (s *RESTServer) handleGetTransfer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/v1/transfers/")
+	if idStr == "" {
+		writeError(w, http.StatusBadRequest, "missing transfer id")
+		return
+	}
+
+	trID, err := parseHexID(idStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid transfer id")
+		return
+	}
+
+	tr, err := s.ledger.GetTransfer(r.Context(), trID)
+	if err != nil {
+		var notFound core.ErrTransferNotFound
+		if errors.As(err, &notFound) {
+			writeError(w, http.StatusNotFound, "transfer not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, formatTransferResp(tr))
+}
+
+func (s *RESTServer) handleGetAccountTransfers(w http.ResponseWriter, r *http.Request, accID [16]byte) {
+	afterStr := r.URL.Query().Get("after")
+	var afterID [16]byte
+	if afterStr != "" {
+		parsed, err := parseHexID(afterStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid after cursor id")
+			return
+		}
+		afterID = parsed
+	}
+
+	limit := 50
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	transfers, err := s.ledger.GetAccountTransfers(r.Context(), accID, afterID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	resps := make([]transferResp, len(transfers))
+	for i, tr := range transfers {
+		resps[i] = formatTransferResp(tr)
+	}
+	writeJSON(w, http.StatusOK, resps)
+}
+
+func formatTransferResp(res core.Transfer) transferResp {
 	return transferResp{
-		ID:              fmt.Sprintf("%x", t.ID[:]),
-		DebitAccountID:  fmt.Sprintf("%x", t.DebitAccountID[:]),
-		CreditAccountID: fmt.Sprintf("%x", t.CreditAccountID[:]),
-		Amount:          core.String(t.Amount),
-		IdempotencyKey:  fmt.Sprintf("%x", t.IdempotencyKey[:]),
+		ID:              fmt.Sprintf("%x", res.ID[:]),
+		DebitAccountID:  fmt.Sprintf("%x", res.DebitAccountID[:]),
+		CreditAccountID: fmt.Sprintf("%x", res.CreditAccountID[:]),
+		Amount:          core.String(res.Amount),
+		IdempotencyKey:  fmt.Sprintf("%x", res.IdempotencyKey[:]),
+		Flags:           res.Flags,
+		Timeout:         res.Timeout,
+		CreatedAt:       res.Timestamp,
 	}
 }
 
@@ -511,12 +616,19 @@ func formatAccountResp(acc core.Account) (accountResp, error) {
 	if err != nil {
 		return accountResp{}, err
 	}
+	avail, err := core.AvailableBalance(acc)
+	if err != nil {
+		return accountResp{}, err
+	}
 	return accountResp{
-		ID:            fmt.Sprintf("%x", acc.ID[:]),
-		Currency:      strings.TrimRight(string(acc.Currency[:]), "\x00"),
-		PostedDebits:  core.String(acc.PostedDebits),
-		PostedCredits: core.String(acc.PostedCredits),
-		Balance:       core.String(bal),
+		ID:               fmt.Sprintf("%x", acc.ID[:]),
+		Currency:         strings.TrimRight(string(acc.Currency[:]), "\x00"),
+		PostedDebits:     core.String(acc.PostedDebits),
+		PostedCredits:    core.String(acc.PostedCredits),
+		PendingDebits:    core.String(acc.PendingDebits),
+		PendingCredits:   core.String(acc.PendingCredits),
+		Balance:          core.String(bal),
+		AvailableBalance: core.String(avail),
 	}, nil
 }
 

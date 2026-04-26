@@ -111,3 +111,39 @@ type ReadAccountResult struct {
 	Account core.Account
 	Err     error
 }
+
+var (
+	readTransferResultPool   = sync.Pool{New: func() any { return make(chan ReadTransferResult, 1) }}
+	readAccountTransfersPool = sync.Pool{New: func() any { return make(chan []core.Transfer, 1) }}
+)
+
+func AcquireReadTransferResult() chan ReadTransferResult {
+	return readTransferResultPool.Get().(chan ReadTransferResult)
+}
+func ReleaseReadTransferResult(ch chan ReadTransferResult) {
+	readTransferResultPool.Put(ch)
+}
+func AcquireReadAccountTransfersResult() chan []core.Transfer {
+	return readAccountTransfersPool.Get().(chan []core.Transfer)
+}
+func ReleaseReadAccountTransfersResult(ch chan []core.Transfer) {
+	readAccountTransfersPool.Put(ch)
+}
+
+type ReadTransferEvent struct {
+	ID     [16]byte
+	Result chan ReadTransferResult
+}
+
+type ReadTransferResult struct {
+	Transfer core.Transfer
+	Found    bool
+}
+
+type ReadAccountTransfersEvent struct {
+	AccountID [16]byte
+	AfterID   [16]byte
+	Limit     int
+	Result    chan []core.Transfer
+}
+

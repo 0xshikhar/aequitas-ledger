@@ -132,3 +132,10 @@ func (e ErrOverTransfer) Error() string {
 	return fmt.Sprintf("post amount %s exceeds pending hold %s for transfer %x",
 		String(e.Amount), String(e.Pending), e.TransferID)
 }
+
+type ErrTransferNotFound struct{ TransferID [16]byte }
+
+func (e ErrTransferNotFound) Error() string {
+	return fmt.Sprintf("transfer not found: %x", e.TransferID)
+}
+

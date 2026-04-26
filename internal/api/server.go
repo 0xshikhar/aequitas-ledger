@@ -135,6 +135,8 @@ func (h *AccountsHandler) CreateTransfer(ctx context.Context, req *ledgerv1.Crea
 		CreditAccountID: creditID,
 		Amount:          amount,
 		IdempotencyKey:  key,
+		Flags:           req.Flags,
+		Timeout:         req.Timeout,
 	}
 
 	res, err := h.ledger.CreateTransfer(ctx, tr)
@@ -196,6 +198,8 @@ func (h *AccountsHandler) CreateTransfers(ctx context.Context, req *ledgerv1.Cre
 			CreditAccountID: creditID,
 			Amount:          core.Uint128{Lo: pt.Amount.Lo, Hi: pt.Amount.Hi},
 			IdempotencyKey:  key,
+			Flags:           pt.Flags,
+			Timeout:         pt.Timeout,
 		}
 	}
 
@@ -277,6 +281,55 @@ func (h *AccountsHandler) CreateAccounts(ctx context.Context, req *ledgerv1.Crea
 	return &ledgerv1.CreateAccountsResponse{Results: results}, nil
 }
 
+func (h *AccountsHandler) GetTransfer(ctx context.Context, req *ledgerv1.GetTransferRequest) (*ledgerv1.GetTransferResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "nil request")
+	}
+	trID, err := bytesToID(req.Id)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid transfer id: %v", err)
+	}
+	tr, err := h.ledger.GetTransfer(ctx, trID)
+	if err != nil {
+		var notFound core.ErrTransferNotFound
+		if errors.As(err, &notFound) {
+			return nil, status.Errorf(codes.NotFound, "transfer not found: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get transfer: %v", err)
+	}
+	return &ledgerv1.GetTransferResponse{Transfer: coreTransferToProto(tr)}, nil
+}
+
+func (h *AccountsHandler) GetAccountTransfers(ctx context.Context, req *ledgerv1.GetAccountTransfersRequest) (*ledgerv1.GetAccountTransfersResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "nil request")
+	}
+	accID, err := bytesToID(req.AccountId)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid account id: %v", err)
+	}
+	var afterID [16]byte
+	if len(req.AfterId) > 0 {
+		afterID, err = bytesToID(req.AfterId)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid after_id: %v", err)
+		}
+	}
+	limit := int(req.Limit)
+	if limit <= 0 {
+		limit = 50
+	}
+	transfers, err := h.ledger.GetAccountTransfers(ctx, accID, afterID, limit)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get account transfers: %v", err)
+	}
+	protoTransfers := make([]*ledgerv1.Transfer, len(transfers))
+	for i, tr := range transfers {
+		protoTransfers[i] = coreTransferToProto(tr)
+	}
+	return &ledgerv1.GetAccountTransfersResponse{Transfers: protoTransfers}, nil
+}
+
 func coreTransferToProto(t core.Transfer) *ledgerv1.Transfer {
 	return &ledgerv1.Transfer{
 		Id:              t.ID[:],
@@ -284,6 +337,9 @@ func coreTransferToProto(t core.Transfer) *ledgerv1.Transfer {
 		CreditAccountId: t.CreditAccountID[:],
 		Amount:          &ledgerv1.Money{Lo: t.Amount.Lo, Hi: t.Amount.Hi},
 		IdempotencyKey:  t.IdempotencyKey[:],
+		CreatedAt:       t.Timestamp,
+		Flags:           t.Flags,
+		Timeout:         t.Timeout,
 	}
 }
 
@@ -297,12 +353,28 @@ func transferErrorStatus(err error) (codes.Code, string) {
 	if errors.Is(err, core.ErrZeroAmount{}) || errors.Is(err, core.ErrSelfTransfer{}) {
 		return codes.InvalidArgument, err.Error()
 	}
+	var invalidFlags core.ErrInvalidTransferFlags
+	if errors.As(err, &invalidFlags) {
+		return codes.InvalidArgument, err.Error()
+	}
 	var notFound core.ErrAccountNotFound
 	if errors.As(err, &notFound) {
 		return codes.NotFound, err.Error()
 	}
+	var trNotFound core.ErrTransferNotFound
+	if errors.As(err, &trNotFound) {
+		return codes.NotFound, err.Error()
+	}
+	var pendingNotFound core.ErrPendingNotFound
+	if errors.As(err, &pendingNotFound) {
+		return codes.NotFound, err.Error()
+	}
 	var insufficient core.ErrInsufficientFunds
 	if errors.As(err, &insufficient) {
+		return codes.FailedPrecondition, err.Error()
+	}
+	var overTransfer core.ErrOverTransfer
+	if errors.As(err, &overTransfer) {
 		return codes.FailedPrecondition, err.Error()
 	}
 	return codes.Internal, err.Error()
@@ -325,11 +397,18 @@ func coreAccountToProto(acc core.Account) (*ledgerv1.Account, error) {
 	if err != nil {
 		return nil, err
 	}
+	avail, err := core.AvailableBalance(acc)
+	if err != nil {
+		return nil, err
+	}
 	return &ledgerv1.Account{
-		Id:            acc.ID[:],
-		Currency:      string(acc.Currency[:]),
-		PostedDebits:  &ledgerv1.Money{Lo: acc.PostedDebits.Lo, Hi: acc.PostedDebits.Hi},
-		PostedCredits: &ledgerv1.Money{Lo: acc.PostedCredits.Lo, Hi: acc.PostedCredits.Hi},
-		Balance:       &ledgerv1.Money{Lo: bal.Lo, Hi: bal.Hi},
+		Id:               acc.ID[:],
+		Currency:         string(acc.Currency[:]),
+		PostedDebits:     &ledgerv1.Money{Lo: acc.PostedDebits.Lo, Hi: acc.PostedDebits.Hi},
+		PostedCredits:    &ledgerv1.Money{Lo: acc.PostedCredits.Lo, Hi: acc.PostedCredits.Hi},
+		PendingDebits:    &ledgerv1.Money{Lo: acc.PendingDebits.Lo, Hi: acc.PendingDebits.Hi},
+		PendingCredits:   &ledgerv1.Money{Lo: acc.PendingCredits.Lo, Hi: acc.PendingCredits.Hi},
+		Balance:          &ledgerv1.Money{Lo: bal.Lo, Hi: bal.Hi},
+		AvailableBalance: &ledgerv1.Money{Lo: avail.Lo, Hi: avail.Hi},
 	}, nil
 }

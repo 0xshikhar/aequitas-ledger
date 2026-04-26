@@ -29,6 +29,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  account create   Create a new account\n")
 		fmt.Fprintf(os.Stderr, "  account get      Get account details by ID\n")
 		fmt.Fprintf(os.Stderr, "  transfer create  Create a new transfer between accounts\n")
+		fmt.Fprintf(os.Stderr, "  transfer get     Get transfer details by ID\n")
+		fmt.Fprintf(os.Stderr, "  transfer list    List transfers for an account with cursor pagination\n")
 		fmt.Fprintf(os.Stderr, "  info             Get ledger health status\n")
 		fmt.Fprintf(os.Stderr, "  audit            Independently verify a WAL directory (T3.4)\n")
 	}
@@ -53,11 +55,12 @@ func main() {
 		subCmd := args[1]
 		accountCmd(client, subCmd, args[2:])
 	case "transfer":
-		if len(args) < 2 || args[1] != "create" {
-			fmt.Fprintln(os.Stderr, "Expected 'create' subcommand for 'transfer'")
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Expected 'create', 'get', or 'list' subcommand for 'transfer'")
 			os.Exit(1)
 		}
-		transferCmd(client, args[2:])
+		subCmd := args[1]
+		transferCmd(client, subCmd, args[2:])
 	case "info":
 		infoCmd(client)
 	case "audit":
@@ -105,28 +108,60 @@ func accountCmd(client *http.Client, subCmd string, args []string) {
 	}
 }
 
-func transferCmd(client *http.Client, args []string) {
-	fs := flag.NewFlagSet("transfer create", flag.ExitOnError)
-	id := fs.String("id", "", "Transfer ID (hex)")
-	debitID := fs.String("debit", "", "Debit Account ID (hex)")
-	creditID := fs.String("credit", "", "Credit Account ID (hex)")
-	amount := fs.String("amount", "", "Transfer Amount")
-	idempKey := fs.String("idempotency-key", "", "Idempotency Key (optional)")
-	fs.Parse(args)
+func transferCmd(client *http.Client, subCmd string, args []string) {
+	fs := flag.NewFlagSet("transfer "+subCmd, flag.ExitOnError)
+	switch subCmd {
+	case "create":
+		id := fs.String("id", "", "Transfer ID (hex)")
+		debitID := fs.String("debit", "", "Debit Account ID (hex)")
+		creditID := fs.String("credit", "", "Credit Account ID (hex)")
+		amount := fs.String("amount", "", "Transfer Amount")
+		idempKey := fs.String("idempotency-key", "", "Idempotency Key (optional)")
+		flags := fs.Uint("flags", 0, "Transfer Flags (1=Pending, 2=PostPending, 4=VoidPending)")
+		timeout := fs.Uint64("timeout", 0, "Hold Timeout in nanoseconds")
+		fs.Parse(args)
 
-	if *id == "" || *debitID == "" || *creditID == "" || *amount == "" {
-		fmt.Fprintln(os.Stderr, "Flags -id, -debit, -credit, and -amount are required")
+		if *id == "" || *debitID == "" || *creditID == "" || *amount == "" {
+			fmt.Fprintln(os.Stderr, "Flags -id, -debit, -credit, and -amount are required")
+			os.Exit(1)
+		}
+
+		payload := map[string]any{
+			"id":                *id,
+			"debit_account_id":  *debitID,
+			"credit_account_id": *creditID,
+			"amount":            *amount,
+			"idempotency_key":   *idempKey,
+			"flags":             uint32(*flags),
+			"timeout":           *timeout,
+		}
+		doPost(client, "/v1/transfers", payload)
+	case "get":
+		id := fs.String("id", "", "Transfer ID (hex)")
+		fs.Parse(args)
+		if *id == "" {
+			fmt.Fprintln(os.Stderr, "Flag -id is required")
+			os.Exit(1)
+		}
+		doGet(client, "/v1/transfers/"+*id)
+	case "list":
+		accountID := fs.String("account", "", "Account ID (hex)")
+		after := fs.String("after", "", "After cursor transfer ID (optional)")
+		limit := fs.Int("limit", 50, "Limit of transfers to return")
+		fs.Parse(args)
+		if *accountID == "" {
+			fmt.Fprintln(os.Stderr, "Flag -account is required")
+			os.Exit(1)
+		}
+		path := fmt.Sprintf("/v1/accounts/%s/transfers?limit=%d", *accountID, *limit)
+		if *after != "" {
+			path += "&after=" + *after
+		}
+		doGet(client, path)
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown transfer subcommand: %s\n", subCmd)
 		os.Exit(1)
 	}
-
-	payload := map[string]string{
-		"id":                *id,
-		"debit_account_id":  *debitID,
-		"credit_account_id": *creditID,
-		"amount":            *amount,
-		"idempotency_key":   *idempKey,
-	}
-	doPost(client, "/v1/transfers", payload)
 }
 
 func infoCmd(client *http.Client) {

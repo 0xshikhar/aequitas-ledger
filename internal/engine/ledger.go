@@ -255,7 +255,7 @@ func (l *Ledger) CreateTransfer(ctx context.Context, t core.Transfer) (core.Tran
 					case <-ctx.Done():
 						return core.Transfer{}, ctx.Err()
 					default:
-						runtime.Gosched()
+						time.Sleep(50 * time.Microsecond)
 						continue
 					}
 				}
@@ -562,6 +562,49 @@ func (l *Ledger) GetBalance(ctx context.Context, id [16]byte) (core.Uint128, err
 		return core.Uint128{}, err
 	}
 	return bal, nil
+}
+
+func (l *Ledger) GetTransfer(ctx context.Context, id [16]byte) (core.Transfer, error) {
+	resChan := AcquireReadTransferResult()
+	ev := ReadTransferEvent{ID: id, Result: resChan}
+
+	select {
+	case l.loop.readTransferQueue <- ev:
+	case <-ctx.Done():
+		ReleaseReadTransferResult(resChan) // never queued
+		return core.Transfer{}, ctx.Err()
+	}
+
+	select {
+	case res := <-resChan:
+		ReleaseReadTransferResult(resChan) // drained; safe to recycle
+		if !res.Found {
+			return core.Transfer{}, core.ErrTransferNotFound{TransferID: id}
+		}
+		return res.Transfer, nil
+	case <-ctx.Done():
+		return core.Transfer{}, ctx.Err()
+	}
+}
+
+func (l *Ledger) GetAccountTransfers(ctx context.Context, accountID [16]byte, afterID [16]byte, limit int) ([]core.Transfer, error) {
+	resChan := AcquireReadAccountTransfersResult()
+	ev := ReadAccountTransfersEvent{AccountID: accountID, AfterID: afterID, Limit: limit, Result: resChan}
+
+	select {
+	case l.loop.readAccountTransfersQueue <- ev:
+	case <-ctx.Done():
+		ReleaseReadAccountTransfersResult(resChan) // never queued
+		return nil, ctx.Err()
+	}
+
+	select {
+	case res := <-resChan:
+		ReleaseReadAccountTransfersResult(resChan) // drained; safe to recycle
+		return res, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (l *Ledger) TriggerSnapshot(ctx context.Context) (int64, error) {
