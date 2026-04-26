@@ -18,9 +18,15 @@ type Segment struct {
 	maxSize      int64
 	writeOffset  int64
 	syncedOffset int64 // bytes known durable (advanced by Sync)
+	directIO     bool
+	directBuf    *directIOBuffer
 }
 
 func openSegment(dir string, id int, maxSize int64) (*Segment, error) {
+	return openSegmentWithOptions(dir, id, maxSize, false)
+}
+
+func openSegmentWithOptions(dir string, id int, maxSize int64, wantDirect bool) (*Segment, error) {
 	if maxSize <= 0 {
 		maxSize = DefaultSegmentSize
 	}
@@ -29,7 +35,7 @@ func openSegment(dir string, id int, maxSize int64) (*Segment, error) {
 	}
 
 	path := segmentPath(dir, id)
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	f, isDirect, err := openDirectFile(path, os.O_RDWR|os.O_CREATE, 0o644, wantDirect)
 	if err != nil {
 		return nil, fmt.Errorf("open segment %s: %w", path, err)
 	}
@@ -40,14 +46,24 @@ func openSegment(dir string, id int, maxSize int64) (*Segment, error) {
 		return nil, fmt.Errorf("stat segment %s: %w", path, err)
 	}
 
-	return &Segment{
+	// Preallocate segment extents/blocks on creation if empty (S2.2).
+	if info.Size() == 0 {
+		_ = preallocate(f, maxSize)
+	}
+
+	seg := &Segment{
 		id:           id,
 		path:         path,
 		file:         f,
 		maxSize:      maxSize,
 		writeOffset:  info.Size(),
 		syncedOffset: info.Size(), // post-recovery content is committed-or-truncated
-	}, nil
+		directIO:     isDirect,
+	}
+	if isDirect {
+		seg.directBuf = newDirectIOBuffer(info.Size())
+	}
+	return seg, nil
 }
 
 func segmentPath(dir string, id int) string {
@@ -59,6 +75,31 @@ func (s *Segment) Write(p []byte) (int64, error) {
 		return s.writeOffset, ErrSegmentFull
 	}
 	start := s.writeOffset
+
+	if s.directIO && s.directBuf != nil {
+		src := p
+		for len(src) > 0 {
+			space := DirectIOBlockSize - s.directBuf.buffered
+			if space == 0 {
+				if err := s.directBuf.flush(s.file, s.directBuf.blockOffset+DirectIOBlockSize); err != nil {
+					return start, err
+				}
+				s.directBuf.blockOffset += DirectIOBlockSize
+				s.directBuf.buffered = 0
+				space = DirectIOBlockSize
+			}
+			chunk := len(src)
+			if chunk > space {
+				chunk = space
+			}
+			copy(s.directBuf.block[s.directBuf.buffered:s.directBuf.buffered+chunk], src[:chunk])
+			s.directBuf.buffered += chunk
+			s.writeOffset += int64(chunk)
+			src = src[chunk:]
+		}
+		return start, nil
+	}
+
 	n, err := s.file.WriteAt(p, start)
 	s.writeOffset += int64(n)
 	if err != nil {
@@ -82,6 +123,11 @@ func (s *Segment) IsFull(nextWriteBytes int) bool {
 }
 
 func (s *Segment) Sync() error {
+	if s.directIO && s.directBuf != nil {
+		if err := s.directBuf.flush(s.file, s.writeOffset); err != nil {
+			return err
+		}
+	}
 	if err := syncFile(s.file); err != nil {
 		return err
 	}
@@ -102,6 +148,9 @@ func (s *Segment) Truncate(size int64) error {
 		return err
 	}
 	s.writeOffset = size
+	if s.directIO && s.directBuf != nil {
+		s.directBuf = newDirectIOBuffer(size)
+	}
 	return nil
 }
 

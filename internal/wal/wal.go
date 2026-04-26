@@ -22,6 +22,7 @@ type WAL struct {
 	mu          sync.Mutex
 	dir         string
 	segmentSize int64
+	directIO    bool
 	current     *Segment
 	currentID   int
 	currentLSN  int64
@@ -30,6 +31,10 @@ type WAL struct {
 }
 
 func Open(dir string, segmentSize int64) (*WAL, error) {
+	return OpenWithOptions(dir, segmentSize, false)
+}
+
+func OpenWithOptions(dir string, segmentSize int64, directIO bool) (*WAL, error) {
 	if segmentSize <= 0 {
 		segmentSize = DefaultSegmentSize
 	}
@@ -46,7 +51,7 @@ func Open(dir string, segmentSize int64) (*WAL, error) {
 		currentID = ids[len(ids)-1]
 	}
 
-	seg, err := openSegment(dir, currentID, segmentSize)
+	seg, err := openSegmentWithOptions(dir, currentID, segmentSize, directIO)
 	if err != nil {
 		return nil, err
 	}
@@ -54,6 +59,7 @@ func Open(dir string, segmentSize int64) (*WAL, error) {
 	return &WAL{
 		dir:         dir,
 		segmentSize: segmentSize,
+		directIO:    directIO,
 		current:     seg,
 		currentID:   currentID,
 	}, nil
@@ -339,7 +345,7 @@ func (w *WAL) rotateLocked() error {
 	}
 
 	w.currentID++
-	seg, err := openSegment(w.dir, w.currentID, w.segmentSize)
+	seg, err := openSegmentWithOptions(w.dir, w.currentID, w.segmentSize, w.directIO)
 	if err != nil {
 		return err
 	}
@@ -375,7 +381,7 @@ func (w *WAL) Reset() error {
 	}
 	w.currentID = 1
 	w.currentLSN = 0
-	seg, err := openSegment(w.dir, w.currentID, w.segmentSize)
+	seg, err := openSegmentWithOptions(w.dir, w.currentID, w.segmentSize, w.directIO)
 	if err != nil {
 		return err
 	}
