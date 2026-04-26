@@ -21,10 +21,18 @@ type Config struct {
 	LogFormat        string
 	WALDir           string
 	WALSegmentSize   int64
+	WALDirectIO      bool
 	SnapshotDir      string
 	SnapshotInterval time.Duration
 	MaxSnapshotsKept int
 	Engine           engine.Config
+
+	// Replication TLS / mTLS configuration (P5.3)
+	ReplicationTLSEnabled   bool
+	ReplicationTLSCertFile  string
+	ReplicationTLSKeyFile   string
+	ReplicationTLSCAFile    string
+	ReplicationTLSInsecure  bool
 }
 
 func Load() Config {
@@ -36,16 +44,22 @@ func Load() Config {
 		// Role comparisons in cmd/server are lowercase; normalize here so
 		// LEDGER_ROLE=FOLLOWER in deployment manifests (docker-compose, k8s)
 		// means what it says instead of silently booting a second primary.
-		LedgerRole:       strings.ToLower(strings.TrimSpace(getEnv("LEDGER_ROLE", "primary"))),
-		PrimaryAddr:      getEnv("PRIMARY_ADDR", "localhost:17001"),
-		LogLevel:         getEnv("LOG_LEVEL", "info"),
-		LogFormat:        getEnv("LOG_FORMAT", "text"),
-		WALDir:           getEnv("WAL_DIR", filepath.Join(".", "data", "wal")),
-		WALSegmentSize:   getEnvInt64("WAL_SEGMENT_SIZE", 64<<20),
-		SnapshotDir:      getEnv("SNAPSHOT_DIR", filepath.Join(".", "data", "snapshots")),
-		SnapshotInterval: getEnvDuration("SNAPSHOT_INTERVAL", 60*time.Second),
-		MaxSnapshotsKept: getEnvInt("SNAPSHOT_MAX_KEPT", 3),
-		Engine:           engine.DefaultConfig(),
+		LedgerRole:              strings.ToLower(strings.TrimSpace(getEnv("LEDGER_ROLE", "primary"))),
+		PrimaryAddr:             getEnv("PRIMARY_ADDR", "localhost:17001"),
+		LogLevel:                getEnv("LOG_LEVEL", "info"),
+		LogFormat:               getEnv("LOG_FORMAT", "text"),
+		WALDir:                  getEnv("WAL_DIR", filepath.Join(".", "data", "wal")),
+		WALSegmentSize:          getEnvInt64("WAL_SEGMENT_SIZE", 64<<20),
+		WALDirectIO:             getEnvBool("WAL_DIRECT_IO", false),
+		SnapshotDir:             getEnv("SNAPSHOT_DIR", filepath.Join(".", "data", "snapshots")),
+		SnapshotInterval:        getEnvDuration("SNAPSHOT_INTERVAL", 60*time.Second),
+		MaxSnapshotsKept:        getEnvInt("SNAPSHOT_MAX_KEPT", 3),
+		ReplicationTLSEnabled:  getEnvBool("REPLICATION_TLS_ENABLED", false),
+		ReplicationTLSCertFile: getEnv("REPLICATION_TLS_CERT", ""),
+		ReplicationTLSKeyFile:  getEnv("REPLICATION_TLS_KEY", ""),
+		ReplicationTLSCAFile:   getEnv("REPLICATION_TLS_CA", ""),
+		ReplicationTLSInsecure: getEnvBool("REPLICATION_TLS_INSECURE", false),
+		Engine:                  engine.DefaultConfig(),
 	}
 
 	cfg.Engine.RingBufferSize = getEnvInt("RING_BUFFER_SIZE", cfg.Engine.RingBufferSize)
@@ -89,3 +103,12 @@ func getEnvDuration(key string, defaultVal time.Duration) time.Duration {
 	}
 	return defaultVal
 }
+
+func getEnvBool(key string, defaultVal bool) bool {
+	if valStr := os.Getenv(key); valStr != "" {
+		lower := strings.ToLower(strings.TrimSpace(valStr))
+		return lower == "true" || lower == "1" || lower == "yes"
+	}
+	return defaultVal
+}
+

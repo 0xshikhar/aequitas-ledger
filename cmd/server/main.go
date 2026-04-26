@@ -30,7 +30,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	w, err := wal.Open(cfg.WALDir, cfg.WALSegmentSize)
+	w, err := wal.OpenWithOptions(cfg.WALDir, cfg.WALSegmentSize, cfg.WALDirectIO)
 	if err != nil {
 		logger.Error("failed to open wal", "error", err)
 		os.Exit(1)
@@ -54,11 +54,39 @@ func main() {
 	if cfg.LedgerRole == "follower" {
 		logger.Info("Node running in FOLLOWER (read-only) mode", "primary", cfg.PrimaryAddr)
 		follower := replication.NewFollower(cfg.PrimaryAddr, w)
+		if cfg.ReplicationTLSEnabled {
+			tlsCfg, err := replication.NewClientTLSConfig(
+				cfg.ReplicationTLSCertFile,
+				cfg.ReplicationTLSKeyFile,
+				cfg.ReplicationTLSCAFile,
+				cfg.ReplicationTLSInsecure,
+			)
+			if err != nil {
+				logger.Error("failed to configure follower replication TLS", "error", err)
+				os.Exit(1)
+			}
+			follower.SetTLSConfig(tlsCfg)
+			logger.Info("Follower replication TLS configured")
+		}
 		follower.Start()
 		defer follower.Stop()
 	} else {
 		logger.Info("Node running in PRIMARY mode", "replication_port", cfg.ReplicationPort)
 		replServer := replication.NewServer(":"+cfg.ReplicationPort, w)
+		if cfg.ReplicationTLSEnabled {
+			tlsCfg, err := replication.NewServerTLSConfig(
+				cfg.ReplicationTLSCertFile,
+				cfg.ReplicationTLSKeyFile,
+				cfg.ReplicationTLSCAFile,
+				false,
+			)
+			if err != nil {
+				logger.Error("failed to configure primary replication TLS", "error", err)
+				os.Exit(1)
+			}
+			replServer.SetTLSConfig(tlsCfg)
+			logger.Info("Primary replication TLS listener configured")
+		}
 		if err := replServer.Start(); err != nil {
 			logger.Error("failed to start replication listener", "error", err)
 		} else {
