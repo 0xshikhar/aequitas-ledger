@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -30,11 +31,12 @@ const replicationPollInterval = 5 * time.Millisecond
 //   - HEAD frames (stream-only) announce the durable head LSN so followers
 //     can report true lag.
 type Server struct {
-	addr     string
-	wal      *wal.WAL
-	term     uint64
-	listener net.Listener
-	conns    atomic.Int64
+	addr      string
+	wal       *wal.WAL
+	term      uint64
+	listener  net.Listener
+	tlsConfig *tls.Config
+	conns     atomic.Int64
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -51,6 +53,19 @@ func NewServer(addr string, w *wal.WAL) *Server {
 	}
 }
 
+// SetTLSConfig configures TLS/mTLS encryption for incoming follower connections (P5.3).
+func (s *Server) SetTLSConfig(cfg *tls.Config) {
+	s.tlsConfig = cfg
+}
+
+// Addr returns the network address the server is listening on.
+func (s *Server) Addr() string {
+	if s.listener != nil {
+		return s.listener.Addr().String()
+	}
+	return s.addr
+}
+
 func (s *Server) Start() error {
 	term, err := PrimaryTerm(s.wal)
 	if err != nil {
@@ -61,6 +76,10 @@ func (s *Server) Start() error {
 	lis, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		return fmt.Errorf("replication server listen failed: %w", err)
+	}
+
+	if s.tlsConfig != nil {
+		lis = tls.NewListener(lis, s.tlsConfig)
 	}
 	s.listener = lis
 

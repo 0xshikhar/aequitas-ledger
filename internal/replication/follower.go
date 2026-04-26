@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -56,6 +57,7 @@ type Follower struct {
 	primaryHead atomic.Int64
 	connected   atomic.Bool
 	failures    atomic.Int64
+	tlsConfig   *tls.Config
 
 	// Tunables (set before Start; zero values select production defaults).
 	// Exported so tests can exercise the circuit breaker quickly.
@@ -251,8 +253,19 @@ func (f *Follower) fullResync() error {
 	return f.localWAL.Reset()
 }
 
+// SetTLSConfig configures TLS/mTLS encryption for dialing the primary (P5.3).
+func (f *Follower) SetTLSConfig(cfg *tls.Config) {
+	f.tlsConfig = cfg
+}
+
 func (f *Follower) syncLoop() error {
-	conn, err := net.Dial("tcp", f.primaryAddr)
+	var conn net.Conn
+	var err error
+	if f.tlsConfig != nil {
+		conn, err = tls.Dial("tcp", f.primaryAddr, f.tlsConfig)
+	} else {
+		conn, err = net.Dial("tcp", f.primaryAddr)
+	}
 	if err != nil {
 		return err
 	}
