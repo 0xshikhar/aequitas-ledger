@@ -6,8 +6,11 @@ import (
 )
 
 const (
-	TransferPayloadSize = 108
-	AccountPayloadSize  = 64
+	// TransferPayloadSize: 16+16+16+16+32+8(ts)+8(timeout)+4(flags) = 116.
+	TransferPayloadSize = 116
+	// AccountPayloadSize matches core.AccountStructSize (96): the two pending
+	// balance fields joined the struct in D1.2 (snapshot format v2).
+	AccountPayloadSize = 96
 )
 
 var (
@@ -42,6 +45,8 @@ func AppendTransferPayload(dst []byte, t Transfer) []byte {
 	off += 32
 	binary.BigEndian.PutUint64(b[off:off+8], uint64(t.Timestamp))
 	off += 8
+	binary.BigEndian.PutUint64(b[off:off+8], t.Timeout)
+	off += 8
 	binary.BigEndian.PutUint32(b[off:off+4], t.Flags)
 	return b
 }
@@ -66,6 +71,8 @@ func DecodeTransferPayload(b []byte) (Transfer, error) {
 	copy(t.IdempotencyKey[:], b[off:off+32])
 	off += 32
 	t.Timestamp = int64(binary.BigEndian.Uint64(b[off : off+8]))
+	off += 8
+	t.Timeout = binary.BigEndian.Uint64(b[off : off+8])
 	off += 8
 	t.Flags = binary.BigEndian.Uint32(b[off : off+4])
 	return t, nil
@@ -95,6 +102,12 @@ func AppendAccountPayload(dst []byte, a Account) []byte {
 	binary.BigEndian.PutUint64(b[off:off+8], a.PostedCredits.Hi)
 	binary.BigEndian.PutUint64(b[off+8:off+16], a.PostedCredits.Lo)
 	off += 16
+	binary.BigEndian.PutUint64(b[off:off+8], a.PendingDebits.Hi)
+	binary.BigEndian.PutUint64(b[off+8:off+16], a.PendingDebits.Lo)
+	off += 16
+	binary.BigEndian.PutUint64(b[off:off+8], a.PendingCredits.Hi)
+	binary.BigEndian.PutUint64(b[off+8:off+16], a.PendingCredits.Lo)
+	off += 16
 	binary.BigEndian.PutUint32(b[off:off+4], a.Flags)
 	return b
 }
@@ -115,6 +128,16 @@ func DecodeAccountPayload(b []byte) (Account, error) {
 	}
 	off += 16
 	a.PostedCredits = Uint128{
+		Hi: binary.BigEndian.Uint64(b[off : off+8]),
+		Lo: binary.BigEndian.Uint64(b[off+8 : off+16]),
+	}
+	off += 16
+	a.PendingDebits = Uint128{
+		Hi: binary.BigEndian.Uint64(b[off : off+8]),
+		Lo: binary.BigEndian.Uint64(b[off+8 : off+16]),
+	}
+	off += 16
+	a.PendingCredits = Uint128{
 		Hi: binary.BigEndian.Uint64(b[off : off+8]),
 		Lo: binary.BigEndian.Uint64(b[off+8 : off+16]),
 	}

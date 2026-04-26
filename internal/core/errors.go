@@ -109,3 +109,26 @@ func (e ErrInvariantViolation) Error() string {
 	return fmt.Sprintf("account invariant violated: %x has debits %s > credits %s",
 		e.AccountID, String(e.PostedDebits), String(e.PostedCredits))
 }
+
+type ErrPendingNotFound struct{ TransferID [16]byte }
+
+func (e ErrPendingNotFound) Error() string {
+	return fmt.Sprintf("pending transfer %x not found (already settled, voided, or expired)", e.TransferID)
+}
+
+type ErrInvalidTransferFlags struct{ Flags uint32 }
+
+func (e ErrInvalidTransferFlags) Error() string {
+	return fmt.Sprintf("invalid transfer flag combination: 0x%x", e.Flags)
+}
+
+type ErrOverTransfer struct {
+	TransferID [16]byte
+	Pending    Uint128
+	Amount     Uint128
+}
+
+func (e ErrOverTransfer) Error() string {
+	return fmt.Sprintf("post amount %s exceeds pending hold %s for transfer %x",
+		String(e.Amount), String(e.Pending), e.TransferID)
+}
