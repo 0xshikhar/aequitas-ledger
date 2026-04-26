@@ -16,8 +16,11 @@ import (
 )
 
 const (
-	MagicHeader = "LEDGER01"
-	AccountSize = 64
+	// MagicHeader v2: account payloads grew to 96 bytes (pending balances,
+	// D1.2) and the snapshot gained a pending-transfers section. v1 files
+	// are refused at load (fail-fast on unknown formats — P5.7).
+	MagicHeader = "LEDGER02"
+	AccountSize = 96
 )
 
 var (
@@ -26,8 +29,9 @@ var (
 	ErrInvalidSnapshotSize  = errors.New("invalid snapshot file size")
 )
 
-// Write serializes accounts slice and snapshot LSN into a binary file at path using atomic write-then-rename.
-func Write(path string, lsn int64, accounts []core.Account) error {
+// Write serializes accounts, the still-open pending transfers (D1.2), and
+// the snapshot LSN into a binary file at path using atomic write-then-rename.
+func Write(path string, lsn int64, accounts []core.Account, pendings []core.Transfer) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -64,9 +68,22 @@ func Write(path string, lsn int64, accounts []core.Account) error {
 		return err
 	}
 
-	// 4. Accounts payload (64 bytes per account)
+	// 4. Accounts payload (96 bytes per account)
 	for i := range accounts {
 		raw := core.EncodeAccountPayload(accounts[i])
+		if _, err := writer.Write(raw); err != nil {
+			return err
+		}
+	}
+
+	// 4b. Pending transfers (D1.2): count + 116-byte payloads each, so a
+	// restored ledger can still post/void holds opened before the snapshot.
+	binary.BigEndian.PutUint64(b8[:], uint64(len(pendings)))
+	if _, err := writer.Write(b8[:]); err != nil {
+		return err
+	}
+	for i := range pendings {
+		raw := core.EncodeTransferPayload(pendings[i])
 		if _, err := writer.Write(raw); err != nil {
 			return err
 		}
@@ -90,15 +107,16 @@ func Write(path string, lsn int64, accounts []core.Account) error {
 	return os.Rename(tmpPath, path)
 }
 
-// Read loads and validates a snapshot file, returning accounts and LSN.
-func Read(path string) ([]core.Account, int64, error) {
+// Read loads and validates a snapshot file, returning accounts, open pending
+// transfers, and the snapshot LSN.
+func Read(path string) ([]core.Account, []core.Transfer, int64, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 
-	if len(data) < 8+8+8+4 { // magic + lsn + count + crc32
-		return nil, 0, ErrInvalidSnapshotSize
+	if len(data) < 8+8+8+8+4 { // magic + lsn + accountCount + pendingCount + crc32
+		return nil, nil, 0, ErrInvalidSnapshotSize
 	}
 
 	// Validate CRC32
@@ -106,35 +124,47 @@ func Read(path string) ([]core.Account, int64, error) {
 	expectedCRC := binary.BigEndian.Uint32(data[len(data)-4:])
 	actualCRC := crc32.ChecksumIEEE(content)
 	if expectedCRC != actualCRC {
-		return nil, 0, ErrSnapshotCorrupted
+		return nil, nil, 0, ErrSnapshotCorrupted
 	}
 
 	magic := string(data[:8])
 	if magic != MagicHeader {
-		return nil, 0, ErrInvalidSnapshotMagic
+		return nil, nil, 0, ErrInvalidSnapshotMagic
 	}
 
 	lsn := int64(binary.BigEndian.Uint64(data[8:16]))
 	count := binary.BigEndian.Uint64(data[16:24])
 
-	expectedPayloadLen := 8 + 8 + 8 + (count * AccountSize)
+	pendingCount := binary.BigEndian.Uint64(data[24:32])
+	expectedPayloadLen := 8 + 8 + 8 + 8 + (count * AccountSize) + (pendingCount * core.TransferPayloadSize)
 	if uint64(len(content)) != expectedPayloadLen {
-		return nil, 0, ErrInvalidSnapshotSize
+		return nil, nil, 0, ErrInvalidSnapshotSize
 	}
 
 	accounts := make([]core.Account, count)
-	payload := data[24:len(content)]
+	payload := data[32:]
 
 	for i := uint64(0); i < count; i++ {
 		offset := i * AccountSize
 		acc, err := core.DecodeAccountPayload(payload[offset : offset+AccountSize])
 		if err != nil {
-			return nil, 0, fmt.Errorf("decode snapshot account %d: %w", i, err)
+			return nil, nil, 0, fmt.Errorf("decode snapshot account %d: %w", i, err)
 		}
 		accounts[i] = acc
 	}
 
-	return accounts, lsn, nil
+	pendings := make([]core.Transfer, pendingCount)
+	pendOff := uint64(count * AccountSize)
+	for i := uint64(0); i < pendingCount; i++ {
+		tr, err := core.DecodeTransferPayload(payload[pendOff : pendOff+core.TransferPayloadSize])
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("decode snapshot pending transfer %d: %w", i, err)
+		}
+		pendings[i] = tr
+		pendOff += core.TransferPayloadSize
+	}
+
+	return accounts, pendings, lsn, nil
 }
 
 // Latest returns the path and LSN of the latest valid .snap file in dir.
@@ -166,7 +196,7 @@ func Latest(dir string) (string, int64, error) {
 		fullPath := filepath.Join(dir, entry.Name())
 		if lsn > maxLSN {
 			// Verify file integrity
-			_, lsnRead, err := Read(fullPath)
+			_, _, lsnRead, err := Read(fullPath)
 			if err == nil && lsnRead == lsn {
 				maxLSN = lsn
 				latestPath = fullPath

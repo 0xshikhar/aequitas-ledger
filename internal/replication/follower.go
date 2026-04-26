@@ -388,6 +388,9 @@ func (f *Follower) flush() error {
 	return nil
 }
 
+// applyRecord applies one streamed record through the ENGINE's shared state
+// machine (C0.8 item 5 + D1.2): flag semantics, hold expiry on the logical
+// clock, and validation are byte-identical to the primary.
 func (f *Follower) applyRecord(r wal.Record) error {
 	switch r.Type {
 	case wal.RecordTypeAccount:
@@ -404,16 +407,12 @@ func (f *Follower) applyRecord(r wal.Record) error {
 		if err != nil {
 			return err
 		}
-		if _, err := f.accounts.Get(t.DebitAccountID); err != nil {
-			return fmt.Errorf("follower missing debit account %v: %w", t.DebitAccountID, err)
+		if t.Timestamp > f.accounts.Clock() {
+			f.accounts.SetClock(t.Timestamp)
 		}
-		if _, err := f.accounts.Get(t.CreditAccountID); err != nil {
-			return fmt.Errorf("follower missing credit account %v: %w", t.CreditAccountID, err)
-		}
-		if err := f.accounts.ApplyDebit(t.DebitAccountID, t.Amount); err != nil {
-			return err
-		}
-		return f.accounts.ApplyCredit(t.CreditAccountID, t.Amount)
+		f.accounts.SetClock(f.accounts.Clock())
+		f.accounts.CloseExpired()
+		return engine.ApplyTransferState(f.accounts, t)
 	default:
 		return nil
 	}
