@@ -28,7 +28,10 @@ func ApplyBatch(events []TransferEvent, outcomes []error, accounts *AccountManag
 			continue
 		}
 
-		accounts.ApplyDebit(t.DebitAccountID, t.Amount)
+		if err := accounts.ApplyDebit(t.DebitAccountID, t.Amount); err != nil {
+			outcomes[i] = err
+			continue
+		}
 		if err := accounts.ApplyCredit(t.CreditAccountID, t.Amount); err != nil {
 			outcomes[i] = err
 		}

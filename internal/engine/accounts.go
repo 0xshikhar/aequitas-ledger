@@ -75,17 +75,17 @@ func (m *AccountManager) ValidateTransfer(t core.Transfer) error {
 	return nil
 }
 
-func (m *AccountManager) ApplyDebit(id [16]byte, amount core.Uint128) {
+func (m *AccountManager) ApplyDebit(id [16]byte, amount core.Uint128) error {
 	acc, err := m.Get(id)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	next, err := core.Add(acc.PostedDebits, amount)
 	if err != nil {
-		panic(core.ErrBalanceOverflow{AccountID: id})
+		return core.ErrBalanceOverflow{AccountID: id}
 	}
 	acc.PostedDebits = next
-	_ = core.Balance(*acc)
+	return nil
 }
 
 func (m *AccountManager) ApplyCredit(id [16]byte, amount core.Uint128) error {
