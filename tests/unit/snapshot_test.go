@@ -34,11 +34,11 @@ func TestSnapshotWriteReadRoundTrip(t *testing.T) {
 		},
 	}
 
-	if err := snapshot.Write(snapPath, lsn, accs); err != nil {
+	if err := snapshot.Write(snapPath, lsn, accs, nil); err != nil {
 		t.Fatalf("failed to write snapshot: %v", err)
 	}
 
-	readAccs, readLSN, err := snapshot.Read(snapPath)
+	readAccs, _, readLSN, err := snapshot.Read(snapPath)
 	if err != nil {
 		t.Fatalf("failed to read snapshot: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestSnapshotChecksumCorruption(t *testing.T) {
 	accs := []core.Account{
 		{ID: [16]byte{1}, Currency: [4]byte{'U', 'S', 'D'}},
 	}
-	if err := snapshot.Write(snapPath, 50, accs); err != nil {
+	if err := snapshot.Write(snapPath, 50, accs, nil); err != nil {
 		t.Fatalf("failed to write snapshot: %v", err)
 	}
 
@@ -74,7 +74,7 @@ func TestSnapshotChecksumCorruption(t *testing.T) {
 	data[10] ^= 0xFF
 	_ = os.WriteFile(snapPath, data, 0644)
 
-	_, _, err = snapshot.Read(snapPath)
+	_, _, _, err = snapshot.Read(snapPath)
 	if err == nil {
 		t.Errorf("expected CRC checksum mismatch error, got nil")
 	}
@@ -89,9 +89,9 @@ func TestSnapshotLatest(t *testing.T) {
 
 	accs := []core.Account{{ID: [16]byte{1}}}
 
-	_ = snapshot.Write(filepath.Join(tmpDir, "snapshot-00000000000000000010.snap"), 10, accs)
-	_ = snapshot.Write(filepath.Join(tmpDir, "snapshot-00000000000000000050.snap"), 50, accs)
-	_ = snapshot.Write(filepath.Join(tmpDir, "snapshot-00000000000000000030.snap"), 30, accs)
+	_ = snapshot.Write(filepath.Join(tmpDir, "snapshot-00000000000000000010.snap"), 10, accs, nil)
+	_ = snapshot.Write(filepath.Join(tmpDir, "snapshot-00000000000000000050.snap"), 50, accs, nil)
+	_ = snapshot.Write(filepath.Join(tmpDir, "snapshot-00000000000000000030.snap"), 30, accs, nil)
 
 	latestPath, maxLSN, err := snapshot.Latest(tmpDir)
 	if err != nil {

@@ -18,6 +18,7 @@ message Account {
   Money pending_debits = 5;
   Money pending_credits = 6;
   Money balance = 7;
+  Money available_balance = 8;
 }
 
 message Transfer {
@@ -27,6 +28,8 @@ message Transfer {
   Money amount = 4;
   bytes idempotency_key = 5;
   int64 created_at = 6;
+  uint32 flags = 7;
+  uint64 timeout = 8;
 }
 
 message CreateAccountRequest {
@@ -53,6 +56,8 @@ message CreateTransferRequest {
   bytes credit_account_id = 3;
   Money amount = 4;
   bytes idempotency_key = 5;
+  uint32 flags = 6;
+  uint64 timeout = 7;
 }
 
 message CreateTransferResponse {
@@ -94,10 +99,31 @@ message CreateAccountsResponse {
   repeated AccountResult results = 1;
 }
 
+// Query API (D1.5): point-lookup for transfers and paginated transfer history
+message GetTransferRequest {
+  bytes id = 1;
+}
+
+message GetTransferResponse {
+  Transfer transfer = 1;
+}
+
+message GetAccountTransfersRequest {
+  bytes account_id = 1;
+  bytes after_id = 2;
+  uint32 limit = 3;
+}
+
+message GetAccountTransfersResponse {
+  repeated Transfer transfers = 1;
+}
+
 service LedgerService {
   rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
   rpc CreateAccounts(CreateAccountsRequest) returns (CreateAccountsResponse);
   rpc GetAccount(GetAccountRequest) returns (GetAccountResponse);
   rpc CreateTransfer(CreateTransferRequest) returns (CreateTransferResponse);
   rpc CreateTransfers(CreateTransfersRequest) returns (CreateTransfersResponse);
+  rpc GetTransfer(GetTransferRequest) returns (GetTransferResponse);
+  rpc GetAccountTransfers(GetAccountTransfersRequest) returns (GetAccountTransfersResponse);
 }

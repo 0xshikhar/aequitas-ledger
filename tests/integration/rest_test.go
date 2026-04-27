@@ -120,4 +120,64 @@ func TestRESTAPIWorkflow(t *testing.T) {
 	if fmt.Sprintf("%v", acc2Data["balance"]) != "250" {
 		t.Errorf("expected account 2 balance '250', got '%v'", acc2Data["balance"])
 	}
+
+	// 7. Query transfer by ID via REST
+	resp, err = http.Get(ts.URL + "/v1/transfers/000000000000000000000000000000a1")
+	if err != nil {
+		t.Fatalf("get transfer failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for transfer get, got %d", resp.StatusCode)
+	}
+	var trData map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&trData)
+	resp.Body.Close()
+	if fmt.Sprintf("%v", trData["amount"]) != "250" {
+		t.Fatalf("expected transfer amount '250', got '%v'", trData["amount"])
+	}
+
+	// 8. Query account transfers via REST
+	resp, err = http.Get(ts.URL + "/v1/accounts/00000000000000000000000000000001/transfers")
+	if err != nil {
+		t.Fatalf("get account transfers failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for account transfers, got %d", resp.StatusCode)
+	}
+	var trList []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&trList)
+	resp.Body.Close()
+	if len(trList) != 1 {
+		t.Fatalf("expected 1 transfer in list, got %d", len(trList))
+	}
+
+	// 9. Two-Phase Hold via REST
+	holdReq := `{"id": "000000000000000000000000000000b1", "debit_account_id": "00000000000000000000000000000001", "credit_account_id": "00000000000000000000000000000002", "amount": "200", "flags": 1}`
+	resp, err = http.Post(ts.URL+"/v1/transfers", "application/json", bytes.NewBufferString(holdReq))
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create hold failed, status: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp, _ = http.Get(ts.URL + "/v1/accounts/00000000000000000000000000000001")
+	json.NewDecoder(resp.Body).Decode(&acc1Data)
+	resp.Body.Close()
+	if fmt.Sprintf("%v", acc1Data["available_balance"]) != "550" {
+		t.Fatalf("expected available_balance 550 after hold, got %v", acc1Data["available_balance"])
+	}
+
+	// Void hold via REST
+	voidReq := `{"id": "000000000000000000000000000000b1", "debit_account_id": "00000000000000000000000000000001", "credit_account_id": "00000000000000000000000000000002", "flags": 4}`
+	resp, err = http.Post(ts.URL+"/v1/transfers", "application/json", bytes.NewBufferString(voidReq))
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("void hold failed, status: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp, _ = http.Get(ts.URL + "/v1/accounts/00000000000000000000000000000001")
+	json.NewDecoder(resp.Body).Decode(&acc1Data)
+	resp.Body.Close()
+	if fmt.Sprintf("%v", acc1Data["available_balance"]) != "750" {
+		t.Fatalf("expected available_balance 750 after void, got %v", acc1Data["available_balance"])
+	}
 }

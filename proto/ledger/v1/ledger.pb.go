@@ -75,16 +75,17 @@ func (x *Money) GetHi() uint64 {
 }
 
 type Account struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Id             []byte                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Currency       string                 `protobuf:"bytes,2,opt,name=currency,proto3" json:"currency,omitempty"`
-	PostedDebits   *Money                 `protobuf:"bytes,3,opt,name=posted_debits,json=postedDebits,proto3" json:"posted_debits,omitempty"`
-	PostedCredits  *Money                 `protobuf:"bytes,4,opt,name=posted_credits,json=postedCredits,proto3" json:"posted_credits,omitempty"`
-	PendingDebits  *Money                 `protobuf:"bytes,5,opt,name=pending_debits,json=pendingDebits,proto3" json:"pending_debits,omitempty"`
-	PendingCredits *Money                 `protobuf:"bytes,6,opt,name=pending_credits,json=pendingCredits,proto3" json:"pending_credits,omitempty"`
-	Balance        *Money                 `protobuf:"bytes,7,opt,name=balance,proto3" json:"balance,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Id               []byte                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Currency         string                 `protobuf:"bytes,2,opt,name=currency,proto3" json:"currency,omitempty"`
+	PostedDebits     *Money                 `protobuf:"bytes,3,opt,name=posted_debits,json=postedDebits,proto3" json:"posted_debits,omitempty"`
+	PostedCredits    *Money                 `protobuf:"bytes,4,opt,name=posted_credits,json=postedCredits,proto3" json:"posted_credits,omitempty"`
+	PendingDebits    *Money                 `protobuf:"bytes,5,opt,name=pending_debits,json=pendingDebits,proto3" json:"pending_debits,omitempty"`
+	PendingCredits   *Money                 `protobuf:"bytes,6,opt,name=pending_credits,json=pendingCredits,proto3" json:"pending_credits,omitempty"`
+	Balance          *Money                 `protobuf:"bytes,7,opt,name=balance,proto3" json:"balance,omitempty"`
+	AvailableBalance *Money                 `protobuf:"bytes,8,opt,name=available_balance,json=availableBalance,proto3" json:"available_balance,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Account) Reset() {
@@ -166,6 +167,13 @@ func (x *Account) GetBalance() *Money {
 	return nil
 }
 
+func (x *Account) GetAvailableBalance() *Money {
+	if x != nil {
+		return x.AvailableBalance
+	}
+	return nil
+}
+
 type Transfer struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Id              []byte                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -174,6 +182,8 @@ type Transfer struct {
 	Amount          *Money                 `protobuf:"bytes,4,opt,name=amount,proto3" json:"amount,omitempty"`
 	IdempotencyKey  []byte                 `protobuf:"bytes,5,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
 	CreatedAt       int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Flags           uint32                 `protobuf:"varint,7,opt,name=flags,proto3" json:"flags,omitempty"`
+	Timeout         uint64                 `protobuf:"varint,8,opt,name=timeout,proto3" json:"timeout,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -246,6 +256,20 @@ func (x *Transfer) GetIdempotencyKey() []byte {
 func (x *Transfer) GetCreatedAt() int64 {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *Transfer) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
+func (x *Transfer) GetTimeout() uint64 {
+	if x != nil {
+		return x.Timeout
 	}
 	return 0
 }
@@ -449,6 +473,8 @@ type CreateTransferRequest struct {
 	CreditAccountId []byte                 `protobuf:"bytes,3,opt,name=credit_account_id,json=creditAccountId,proto3" json:"credit_account_id,omitempty"`
 	Amount          *Money                 `protobuf:"bytes,4,opt,name=amount,proto3" json:"amount,omitempty"`
 	IdempotencyKey  []byte                 `protobuf:"bytes,5,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	Flags           uint32                 `protobuf:"varint,6,opt,name=flags,proto3" json:"flags,omitempty"`
+	Timeout         uint64                 `protobuf:"varint,7,opt,name=timeout,proto3" json:"timeout,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -516,6 +542,20 @@ func (x *CreateTransferRequest) GetIdempotencyKey() []byte {
 		return x.IdempotencyKey
 	}
 	return nil
+}
+
+func (x *CreateTransferRequest) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
+func (x *CreateTransferRequest) GetTimeout() uint64 {
+	if x != nil {
+		return x.Timeout
+	}
+	return 0
 }
 
 type CreateTransferResponse struct {
@@ -865,6 +905,199 @@ func (x *CreateAccountsResponse) GetResults() []*AccountResult {
 	return nil
 }
 
+// Query API (D1.5): point-lookup for transfers and paginated transfer history
+type GetTransferRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            []byte                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTransferRequest) Reset() {
+	*x = GetTransferRequest{}
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTransferRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTransferRequest) ProtoMessage() {}
+
+func (x *GetTransferRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTransferRequest.ProtoReflect.Descriptor instead.
+func (*GetTransferRequest) Descriptor() ([]byte, []int) {
+	return file_proto_ledger_v1_ledger_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *GetTransferRequest) GetId() []byte {
+	if x != nil {
+		return x.Id
+	}
+	return nil
+}
+
+type GetTransferResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Transfer      *Transfer              `protobuf:"bytes,1,opt,name=transfer,proto3" json:"transfer,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTransferResponse) Reset() {
+	*x = GetTransferResponse{}
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTransferResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTransferResponse) ProtoMessage() {}
+
+func (x *GetTransferResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTransferResponse.ProtoReflect.Descriptor instead.
+func (*GetTransferResponse) Descriptor() ([]byte, []int) {
+	return file_proto_ledger_v1_ledger_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GetTransferResponse) GetTransfer() *Transfer {
+	if x != nil {
+		return x.Transfer
+	}
+	return nil
+}
+
+type GetAccountTransfersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccountId     []byte                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	AfterId       []byte                 `protobuf:"bytes,2,opt,name=after_id,json=afterId,proto3" json:"after_id,omitempty"`
+	Limit         uint32                 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAccountTransfersRequest) Reset() {
+	*x = GetAccountTransfersRequest{}
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAccountTransfersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAccountTransfersRequest) ProtoMessage() {}
+
+func (x *GetAccountTransfersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAccountTransfersRequest.ProtoReflect.Descriptor instead.
+func (*GetAccountTransfersRequest) Descriptor() ([]byte, []int) {
+	return file_proto_ledger_v1_ledger_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *GetAccountTransfersRequest) GetAccountId() []byte {
+	if x != nil {
+		return x.AccountId
+	}
+	return nil
+}
+
+func (x *GetAccountTransfersRequest) GetAfterId() []byte {
+	if x != nil {
+		return x.AfterId
+	}
+	return nil
+}
+
+func (x *GetAccountTransfersRequest) GetLimit() uint32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type GetAccountTransfersResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Transfers     []*Transfer            `protobuf:"bytes,1,rep,name=transfers,proto3" json:"transfers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetAccountTransfersResponse) Reset() {
+	*x = GetAccountTransfersResponse{}
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetAccountTransfersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetAccountTransfersResponse) ProtoMessage() {}
+
+func (x *GetAccountTransfersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_ledger_v1_ledger_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetAccountTransfersResponse.ProtoReflect.Descriptor instead.
+func (*GetAccountTransfersResponse) Descriptor() ([]byte, []int) {
+	return file_proto_ledger_v1_ledger_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *GetAccountTransfersResponse) GetTransfers() []*Transfer {
+	if x != nil {
+		return x.Transfers
+	}
+	return nil
+}
+
 var File_proto_ledger_v1_ledger_proto protoreflect.FileDescriptor
 
 const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
@@ -872,7 +1105,7 @@ const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
 	"\x1cproto/ledger/v1/ledger.proto\x12\tledger.v1\"'\n" +
 	"\x05Money\x12\x0e\n" +
 	"\x02lo\x18\x01 \x01(\x04R\x02lo\x12\x0e\n" +
-	"\x02hi\x18\x02 \x01(\x04R\x02hi\"\xc5\x02\n" +
+	"\x02hi\x18\x02 \x01(\x04R\x02hi\"\x84\x03\n" +
 	"\aAccount\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x1a\n" +
 	"\bcurrency\x18\x02 \x01(\tR\bcurrency\x125\n" +
@@ -880,7 +1113,8 @@ const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
 	"\x0eposted_credits\x18\x04 \x01(\v2\x10.ledger.v1.MoneyR\rpostedCredits\x127\n" +
 	"\x0epending_debits\x18\x05 \x01(\v2\x10.ledger.v1.MoneyR\rpendingDebits\x129\n" +
 	"\x0fpending_credits\x18\x06 \x01(\v2\x10.ledger.v1.MoneyR\x0ependingCredits\x12*\n" +
-	"\abalance\x18\a \x01(\v2\x10.ledger.v1.MoneyR\abalance\"\xe2\x01\n" +
+	"\abalance\x18\a \x01(\v2\x10.ledger.v1.MoneyR\abalance\x12=\n" +
+	"\x11available_balance\x18\b \x01(\v2\x10.ledger.v1.MoneyR\x10availableBalance\"\x92\x02\n" +
 	"\bTransfer\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12(\n" +
 	"\x10debit_account_id\x18\x02 \x01(\fR\x0edebitAccountId\x12*\n" +
@@ -888,7 +1122,9 @@ const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
 	"\x06amount\x18\x04 \x01(\v2\x10.ledger.v1.MoneyR\x06amount\x12'\n" +
 	"\x0fidempotency_key\x18\x05 \x01(\fR\x0eidempotencyKey\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x06 \x01(\x03R\tcreatedAt\"\x8a\x01\n" +
+	"created_at\x18\x06 \x01(\x03R\tcreatedAt\x12\x14\n" +
+	"\x05flags\x18\a \x01(\rR\x05flags\x12\x18\n" +
+	"\atimeout\x18\b \x01(\x04R\atimeout\"\x8a\x01\n" +
 	"\x14CreateAccountRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x1a\n" +
 	"\bcurrency\x18\x02 \x01(\tR\bcurrency\x12F\n" +
@@ -898,13 +1134,15 @@ const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
 	"\x11GetAccountRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\"B\n" +
 	"\x12GetAccountResponse\x12,\n" +
-	"\aaccount\x18\x01 \x01(\v2\x12.ledger.v1.AccountR\aaccount\"\xd0\x01\n" +
+	"\aaccount\x18\x01 \x01(\v2\x12.ledger.v1.AccountR\aaccount\"\x80\x02\n" +
 	"\x15CreateTransferRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12(\n" +
 	"\x10debit_account_id\x18\x02 \x01(\fR\x0edebitAccountId\x12*\n" +
 	"\x11credit_account_id\x18\x03 \x01(\fR\x0fcreditAccountId\x12(\n" +
 	"\x06amount\x18\x04 \x01(\v2\x10.ledger.v1.MoneyR\x06amount\x12'\n" +
-	"\x0fidempotency_key\x18\x05 \x01(\fR\x0eidempotencyKey\"I\n" +
+	"\x0fidempotency_key\x18\x05 \x01(\fR\x0eidempotencyKey\x12\x14\n" +
+	"\x05flags\x18\x06 \x01(\rR\x05flags\x12\x18\n" +
+	"\atimeout\x18\a \x01(\x04R\atimeout\"I\n" +
 	"\x16CreateTransferResponse\x12/\n" +
 	"\btransfer\x18\x01 \x01(\v2\x13.ledger.v1.TransferR\btransfer\"g\n" +
 	"\x0eTransferResult\x12\x0e\n" +
@@ -922,14 +1160,27 @@ const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
 	"\x15CreateAccountsRequest\x12;\n" +
 	"\baccounts\x18\x01 \x03(\v2\x1f.ledger.v1.CreateAccountRequestR\baccounts\"L\n" +
 	"\x16CreateAccountsResponse\x122\n" +
-	"\aresults\x18\x01 \x03(\v2\x18.ledger.v1.AccountResultR\aresults2\xb6\x03\n" +
+	"\aresults\x18\x01 \x03(\v2\x18.ledger.v1.AccountResultR\aresults\"$\n" +
+	"\x12GetTransferRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\fR\x02id\"F\n" +
+	"\x13GetTransferResponse\x12/\n" +
+	"\btransfer\x18\x01 \x01(\v2\x13.ledger.v1.TransferR\btransfer\"l\n" +
+	"\x1aGetAccountTransfersRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\fR\taccountId\x12\x19\n" +
+	"\bafter_id\x18\x02 \x01(\fR\aafterId\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\rR\x05limit\"P\n" +
+	"\x1bGetAccountTransfersResponse\x121\n" +
+	"\ttransfers\x18\x01 \x03(\v2\x13.ledger.v1.TransferR\ttransfers2\xea\x04\n" +
 	"\rLedgerService\x12R\n" +
 	"\rCreateAccount\x12\x1f.ledger.v1.CreateAccountRequest\x1a .ledger.v1.CreateAccountResponse\x12U\n" +
 	"\x0eCreateAccounts\x12 .ledger.v1.CreateAccountsRequest\x1a!.ledger.v1.CreateAccountsResponse\x12I\n" +
 	"\n" +
 	"GetAccount\x12\x1c.ledger.v1.GetAccountRequest\x1a\x1d.ledger.v1.GetAccountResponse\x12U\n" +
 	"\x0eCreateTransfer\x12 .ledger.v1.CreateTransferRequest\x1a!.ledger.v1.CreateTransferResponse\x12X\n" +
-	"\x0fCreateTransfers\x12!.ledger.v1.CreateTransfersRequest\x1a\".ledger.v1.CreateTransfersResponseB*Z(aequitas-ledger/proto/ledger/v1;ledgerv1b\x06proto3"
+	"\x0fCreateTransfers\x12!.ledger.v1.CreateTransfersRequest\x1a\".ledger.v1.CreateTransfersResponse\x12L\n" +
+	"\vGetTransfer\x12\x1d.ledger.v1.GetTransferRequest\x1a\x1e.ledger.v1.GetTransferResponse\x12d\n" +
+	"\x13GetAccountTransfers\x12%.ledger.v1.GetAccountTransfersRequest\x1a&.ledger.v1.GetAccountTransfersResponseB*Z(aequitas-ledger/proto/ledger/v1;ledgerv1b\x06proto3"
 
 var (
 	file_proto_ledger_v1_ledger_proto_rawDescOnce sync.Once
@@ -943,23 +1194,27 @@ func file_proto_ledger_v1_ledger_proto_rawDescGZIP() []byte {
 	return file_proto_ledger_v1_ledger_proto_rawDescData
 }
 
-var file_proto_ledger_v1_ledger_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_proto_ledger_v1_ledger_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_proto_ledger_v1_ledger_proto_goTypes = []any{
-	(*Money)(nil),                   // 0: ledger.v1.Money
-	(*Account)(nil),                 // 1: ledger.v1.Account
-	(*Transfer)(nil),                // 2: ledger.v1.Transfer
-	(*CreateAccountRequest)(nil),    // 3: ledger.v1.CreateAccountRequest
-	(*CreateAccountResponse)(nil),   // 4: ledger.v1.CreateAccountResponse
-	(*GetAccountRequest)(nil),       // 5: ledger.v1.GetAccountRequest
-	(*GetAccountResponse)(nil),      // 6: ledger.v1.GetAccountResponse
-	(*CreateTransferRequest)(nil),   // 7: ledger.v1.CreateTransferRequest
-	(*CreateTransferResponse)(nil),  // 8: ledger.v1.CreateTransferResponse
-	(*TransferResult)(nil),          // 9: ledger.v1.TransferResult
-	(*CreateTransfersRequest)(nil),  // 10: ledger.v1.CreateTransfersRequest
-	(*CreateTransfersResponse)(nil), // 11: ledger.v1.CreateTransfersResponse
-	(*AccountResult)(nil),           // 12: ledger.v1.AccountResult
-	(*CreateAccountsRequest)(nil),   // 13: ledger.v1.CreateAccountsRequest
-	(*CreateAccountsResponse)(nil),  // 14: ledger.v1.CreateAccountsResponse
+	(*Money)(nil),                       // 0: ledger.v1.Money
+	(*Account)(nil),                     // 1: ledger.v1.Account
+	(*Transfer)(nil),                    // 2: ledger.v1.Transfer
+	(*CreateAccountRequest)(nil),        // 3: ledger.v1.CreateAccountRequest
+	(*CreateAccountResponse)(nil),       // 4: ledger.v1.CreateAccountResponse
+	(*GetAccountRequest)(nil),           // 5: ledger.v1.GetAccountRequest
+	(*GetAccountResponse)(nil),          // 6: ledger.v1.GetAccountResponse
+	(*CreateTransferRequest)(nil),       // 7: ledger.v1.CreateTransferRequest
+	(*CreateTransferResponse)(nil),      // 8: ledger.v1.CreateTransferResponse
+	(*TransferResult)(nil),              // 9: ledger.v1.TransferResult
+	(*CreateTransfersRequest)(nil),      // 10: ledger.v1.CreateTransfersRequest
+	(*CreateTransfersResponse)(nil),     // 11: ledger.v1.CreateTransfersResponse
+	(*AccountResult)(nil),               // 12: ledger.v1.AccountResult
+	(*CreateAccountsRequest)(nil),       // 13: ledger.v1.CreateAccountsRequest
+	(*CreateAccountsResponse)(nil),      // 14: ledger.v1.CreateAccountsResponse
+	(*GetTransferRequest)(nil),          // 15: ledger.v1.GetTransferRequest
+	(*GetTransferResponse)(nil),         // 16: ledger.v1.GetTransferResponse
+	(*GetAccountTransfersRequest)(nil),  // 17: ledger.v1.GetAccountTransfersRequest
+	(*GetAccountTransfersResponse)(nil), // 18: ledger.v1.GetAccountTransfersResponse
 }
 var file_proto_ledger_v1_ledger_proto_depIdxs = []int32{
 	0,  // 0: ledger.v1.Account.posted_debits:type_name -> ledger.v1.Money
@@ -967,33 +1222,40 @@ var file_proto_ledger_v1_ledger_proto_depIdxs = []int32{
 	0,  // 2: ledger.v1.Account.pending_debits:type_name -> ledger.v1.Money
 	0,  // 3: ledger.v1.Account.pending_credits:type_name -> ledger.v1.Money
 	0,  // 4: ledger.v1.Account.balance:type_name -> ledger.v1.Money
-	0,  // 5: ledger.v1.Transfer.amount:type_name -> ledger.v1.Money
-	0,  // 6: ledger.v1.CreateAccountRequest.initial_posted_credits:type_name -> ledger.v1.Money
-	1,  // 7: ledger.v1.CreateAccountResponse.account:type_name -> ledger.v1.Account
-	1,  // 8: ledger.v1.GetAccountResponse.account:type_name -> ledger.v1.Account
-	0,  // 9: ledger.v1.CreateTransferRequest.amount:type_name -> ledger.v1.Money
-	2,  // 10: ledger.v1.CreateTransferResponse.transfer:type_name -> ledger.v1.Transfer
-	2,  // 11: ledger.v1.TransferResult.transfer:type_name -> ledger.v1.Transfer
-	2,  // 12: ledger.v1.CreateTransfersRequest.transfers:type_name -> ledger.v1.Transfer
-	9,  // 13: ledger.v1.CreateTransfersResponse.results:type_name -> ledger.v1.TransferResult
-	1,  // 14: ledger.v1.AccountResult.account:type_name -> ledger.v1.Account
-	3,  // 15: ledger.v1.CreateAccountsRequest.accounts:type_name -> ledger.v1.CreateAccountRequest
-	12, // 16: ledger.v1.CreateAccountsResponse.results:type_name -> ledger.v1.AccountResult
-	3,  // 17: ledger.v1.LedgerService.CreateAccount:input_type -> ledger.v1.CreateAccountRequest
-	13, // 18: ledger.v1.LedgerService.CreateAccounts:input_type -> ledger.v1.CreateAccountsRequest
-	5,  // 19: ledger.v1.LedgerService.GetAccount:input_type -> ledger.v1.GetAccountRequest
-	7,  // 20: ledger.v1.LedgerService.CreateTransfer:input_type -> ledger.v1.CreateTransferRequest
-	10, // 21: ledger.v1.LedgerService.CreateTransfers:input_type -> ledger.v1.CreateTransfersRequest
-	4,  // 22: ledger.v1.LedgerService.CreateAccount:output_type -> ledger.v1.CreateAccountResponse
-	14, // 23: ledger.v1.LedgerService.CreateAccounts:output_type -> ledger.v1.CreateAccountsResponse
-	6,  // 24: ledger.v1.LedgerService.GetAccount:output_type -> ledger.v1.GetAccountResponse
-	8,  // 25: ledger.v1.LedgerService.CreateTransfer:output_type -> ledger.v1.CreateTransferResponse
-	11, // 26: ledger.v1.LedgerService.CreateTransfers:output_type -> ledger.v1.CreateTransfersResponse
-	22, // [22:27] is the sub-list for method output_type
-	17, // [17:22] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	0,  // 5: ledger.v1.Account.available_balance:type_name -> ledger.v1.Money
+	0,  // 6: ledger.v1.Transfer.amount:type_name -> ledger.v1.Money
+	0,  // 7: ledger.v1.CreateAccountRequest.initial_posted_credits:type_name -> ledger.v1.Money
+	1,  // 8: ledger.v1.CreateAccountResponse.account:type_name -> ledger.v1.Account
+	1,  // 9: ledger.v1.GetAccountResponse.account:type_name -> ledger.v1.Account
+	0,  // 10: ledger.v1.CreateTransferRequest.amount:type_name -> ledger.v1.Money
+	2,  // 11: ledger.v1.CreateTransferResponse.transfer:type_name -> ledger.v1.Transfer
+	2,  // 12: ledger.v1.TransferResult.transfer:type_name -> ledger.v1.Transfer
+	2,  // 13: ledger.v1.CreateTransfersRequest.transfers:type_name -> ledger.v1.Transfer
+	9,  // 14: ledger.v1.CreateTransfersResponse.results:type_name -> ledger.v1.TransferResult
+	1,  // 15: ledger.v1.AccountResult.account:type_name -> ledger.v1.Account
+	3,  // 16: ledger.v1.CreateAccountsRequest.accounts:type_name -> ledger.v1.CreateAccountRequest
+	12, // 17: ledger.v1.CreateAccountsResponse.results:type_name -> ledger.v1.AccountResult
+	2,  // 18: ledger.v1.GetTransferResponse.transfer:type_name -> ledger.v1.Transfer
+	2,  // 19: ledger.v1.GetAccountTransfersResponse.transfers:type_name -> ledger.v1.Transfer
+	3,  // 20: ledger.v1.LedgerService.CreateAccount:input_type -> ledger.v1.CreateAccountRequest
+	13, // 21: ledger.v1.LedgerService.CreateAccounts:input_type -> ledger.v1.CreateAccountsRequest
+	5,  // 22: ledger.v1.LedgerService.GetAccount:input_type -> ledger.v1.GetAccountRequest
+	7,  // 23: ledger.v1.LedgerService.CreateTransfer:input_type -> ledger.v1.CreateTransferRequest
+	10, // 24: ledger.v1.LedgerService.CreateTransfers:input_type -> ledger.v1.CreateTransfersRequest
+	15, // 25: ledger.v1.LedgerService.GetTransfer:input_type -> ledger.v1.GetTransferRequest
+	17, // 26: ledger.v1.LedgerService.GetAccountTransfers:input_type -> ledger.v1.GetAccountTransfersRequest
+	4,  // 27: ledger.v1.LedgerService.CreateAccount:output_type -> ledger.v1.CreateAccountResponse
+	14, // 28: ledger.v1.LedgerService.CreateAccounts:output_type -> ledger.v1.CreateAccountsResponse
+	6,  // 29: ledger.v1.LedgerService.GetAccount:output_type -> ledger.v1.GetAccountResponse
+	8,  // 30: ledger.v1.LedgerService.CreateTransfer:output_type -> ledger.v1.CreateTransferResponse
+	11, // 31: ledger.v1.LedgerService.CreateTransfers:output_type -> ledger.v1.CreateTransfersResponse
+	16, // 32: ledger.v1.LedgerService.GetTransfer:output_type -> ledger.v1.GetTransferResponse
+	18, // 33: ledger.v1.LedgerService.GetAccountTransfers:output_type -> ledger.v1.GetAccountTransfersResponse
+	27, // [27:34] is the sub-list for method output_type
+	20, // [20:27] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_proto_ledger_v1_ledger_proto_init() }
@@ -1007,7 +1269,7 @@ func file_proto_ledger_v1_ledger_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_ledger_v1_ledger_proto_rawDesc), len(file_proto_ledger_v1_ledger_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

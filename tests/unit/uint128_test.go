@@ -89,8 +89,8 @@ func FuzzUint128StringRoundTrip(f *testing.F) {
 	})
 }
 
-func TestAccountSize64(t *testing.T) {
-	if got := unsafe.Sizeof(core.Account{}); got != 64 {
-		t.Fatalf("unexpected account size: got=%d want=64", got)
+func TestAccountSize(t *testing.T) {
+	if got := unsafe.Sizeof(core.Account{}); got != core.AccountStructSize {
+		t.Fatalf("unexpected account size: got=%d want=%d", got, core.AccountStructSize)
 	}
 }
