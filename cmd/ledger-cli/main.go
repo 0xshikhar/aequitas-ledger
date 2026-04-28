@@ -79,6 +79,10 @@ func accountCmd(client *http.Client, subCmd string, args []string) {
 		id := fs.String("id", "", "Account ID (hex)")
 		currency := fs.String("currency", "USD", "Currency code (max 4 chars)")
 		initialCredits := fs.String("initial-credits", "0", "Initial credits")
+		ledger := fs.Uint("ledger", 0, "Ledger ID (uint32)")
+		code := fs.Uint("code", 0, "Account Code (uint16)")
+		userData := fs.String("user-data", "", "User Data 128 (hex or string)")
+		flags := fs.Uint("flags", 0, "Account Flags (uint32)")
 		fs.Parse(args)
 
 		if *id == "" {
@@ -86,10 +90,14 @@ func accountCmd(client *http.Client, subCmd string, args []string) {
 			os.Exit(1)
 		}
 
-		payload := map[string]string{
+		payload := map[string]any{
 			"id":              *id,
 			"currency":        *currency,
 			"initial_credits": *initialCredits,
+			"ledger":          uint32(*ledger),
+			"code":            uint16(*code),
+			"user_data128":    *userData,
+			"flags":           uint32(*flags),
 		}
 		doPost(client, "/v1/accounts", payload)
 
@@ -117,8 +125,11 @@ func transferCmd(client *http.Client, subCmd string, args []string) {
 		creditID := fs.String("credit", "", "Credit Account ID (hex)")
 		amount := fs.String("amount", "", "Transfer Amount")
 		idempKey := fs.String("idempotency-key", "", "Idempotency Key (optional)")
-		flags := fs.Uint("flags", 0, "Transfer Flags (1=Pending, 2=PostPending, 4=VoidPending)")
+		flags := fs.Uint("flags", 0, "Transfer Flags (1=Pending, 2=PostPending, 4=VoidPending, 8=Linked)")
 		timeout := fs.Uint64("timeout", 0, "Hold Timeout in nanoseconds")
+		ledger := fs.Uint("ledger", 0, "Ledger ID (uint32)")
+		code := fs.Uint("code", 0, "Transfer Code (uint16)")
+		userData := fs.String("user-data", "", "User Data 128 (hex or string)")
 		fs.Parse(args)
 
 		if *id == "" || *debitID == "" || *creditID == "" || *amount == "" {
@@ -134,6 +145,9 @@ func transferCmd(client *http.Client, subCmd string, args []string) {
 			"idempotency_key":   *idempKey,
 			"flags":             uint32(*flags),
 			"timeout":           *timeout,
+			"ledger":            uint32(*ledger),
+			"code":              uint16(*code),
+			"user_data128":      *userData,
 		}
 		doPost(client, "/v1/transfers", payload)
 	case "get":
