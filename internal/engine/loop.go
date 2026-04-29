@@ -272,11 +272,23 @@ func (l *EventLoop) processBatch(events []TransferEvent) {
 	nEvents := len(events)
 	observability.BatchSize.Observe(float64(nEvents))
 
-	// Batch clock (D1.2): one timestamp per batch, driving hold expiry on
+	// Batch clock (D1.2, D1.6): one timestamp per batch, driving hold expiry on
 	// the logical clock so replay decisions match live ones exactly.
-	l.clock = time.Now().UnixNano()
+	// Timestamp batches once at the batch boundary rather than calling time.Now()
+	// per transfer, guaranteeing identical timestamps across replay and follower nodes.
+	now := time.Now().UnixNano()
+	if now <= l.clock {
+		now = l.clock + 1
+	}
+	l.clock = now
 	l.accounts.SetClock(l.clock)
 	l.accounts.CloseExpired()
+
+	// Batch-synchronous timestamp discipline (D1.6): stamp every transfer in the
+	// batch upfront before validation and journaling.
+	for i := range events {
+		events[i].Transfer.Timestamp = l.clock
+	}
 
 	outcomes := ValidateBatch(events, l.accounts)
 	records := l.makeWALRecords(events, outcomes)
@@ -329,15 +341,9 @@ func (l *EventLoop) makeWALRecords(events []TransferEvent, outcomes []error) []w
 			continue
 		}
 		t := events[i].Transfer
-		if t.Timestamp == 0 {
-			// Batch-level timestamp: the batch clock drives hold expiry, and
-			// replay reconstructs the same clock from this field.
-			t.Timestamp = l.clock
-		}
 		mark := len(l.payloadBuf)
 		l.payloadBuf = core.AppendTransferPayload(l.payloadBuf, t)
 		l.recordsBuf = append(l.recordsBuf, wal.Record{Type: wal.RecordTypeTransfer, Payload: l.payloadBuf[mark:]})
-		events[i].Transfer = t
 	}
 	return l.recordsBuf
 }

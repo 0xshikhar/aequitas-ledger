@@ -141,6 +141,11 @@ func (m *AccountManager) checkTransfer(t core.Transfer) (remaining core.Uint128,
 	isVoid := t.Flags&core.TransferFlagVoidPending != 0
 	isPending := t.Flags&core.TransferFlagPending != 0
 
+	knownFlags := core.TransferFlagPending | core.TransferFlagPostPending | core.TransferFlagVoidPending | core.TransferFlagLinked
+	if t.Flags &^ knownFlags != 0 {
+		return remaining, core.ErrInvalidTransferFlags{Flags: t.Flags}
+	}
+
 	if isPost && (isPending || isVoid) || isVoid && isPending {
 		return remaining, core.ErrInvalidTransferFlags{Flags: t.Flags}
 	}
@@ -151,6 +156,13 @@ func (m *AccountManager) checkTransfer(t core.Transfer) (remaining core.Uint128,
 			return remaining, core.ErrPendingNotFound{TransferID: t.ID}
 		}
 		pending := p.transfer
+		if t.Ledger != 0 && t.Ledger != pending.Ledger {
+			return remaining, core.ErrLedgerMismatch{
+				TransferLedger: t.Ledger,
+				DebitLedger:    pending.Ledger,
+				CreditLedger:   pending.Ledger,
+			}
+		}
 		remaining = pending.Amount
 		if isPost {
 			// Amount 0 settles the full remaining hold.
@@ -183,6 +195,13 @@ func (m *AccountManager) checkTransfer(t core.Transfer) (remaining core.Uint128,
 	}
 	if debit.Currency != credit.Currency {
 		return remaining, core.ErrCurrencyMismatch{DebitCurrency: debit.Currency, CreditCurrency: credit.Currency}
+	}
+	if debit.Ledger != t.Ledger || credit.Ledger != t.Ledger {
+		return remaining, core.ErrLedgerMismatch{
+			TransferLedger: t.Ledger,
+			DebitLedger:    debit.Ledger,
+			CreditLedger:   credit.Ledger,
+		}
 	}
 	if core.IsFrozen(*debit) {
 		return remaining, core.ErrAccountFrozen{AccountID: debit.ID}
@@ -239,6 +258,15 @@ func ApplyTransferState(m *AccountManager, t core.Transfer) error {
 	case isPost:
 		p := m.pending[t.ID]
 		amount := remaining
+		if t.Ledger == 0 {
+			t.Ledger = p.transfer.Ledger
+		}
+		if t.DebitAccountID == ([16]byte{}) {
+			t.DebitAccountID = p.transfer.DebitAccountID
+		}
+		if t.CreditAccountID == ([16]byte{}) {
+			t.CreditAccountID = p.transfer.CreditAccountID
+		}
 		if err := m.movePending(p.transfer, amount); err != nil {
 			return err
 		}
@@ -251,6 +279,15 @@ func ApplyTransferState(m *AccountManager, t core.Transfer) error {
 		return nil
 	case isVoid:
 		p := m.pending[t.ID]
+		if t.Ledger == 0 {
+			t.Ledger = p.transfer.Ledger
+		}
+		if t.DebitAccountID == ([16]byte{}) {
+			t.DebitAccountID = p.transfer.DebitAccountID
+		}
+		if t.CreditAccountID == ([16]byte{}) {
+			t.CreditAccountID = p.transfer.CreditAccountID
+		}
 		if err := m.releasePending(p.transfer); err != nil {
 			return err
 		}

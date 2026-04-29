@@ -99,9 +99,13 @@ func Audit(dir string) (Report, error) {
 	sort.Ints(ids)
 	rep.Segments = len(ids)
 
-	type bal struct{ credits, debits uint64 }
+	type bal struct {
+		credits uint64
+		debits  uint64
+		ledger  uint32
+	}
 	balances := map[[16]byte]*bal{}
-	injected := uint64(0)
+	injectedPerLedger := map[uint32]uint64{}
 	keys := map[[32]byte][16]byte{} // idempotency key → transfer ID
 	transferIDs := map[[16]byte]string{}
 
@@ -158,15 +162,23 @@ func Audit(dir string) (Report, error) {
 					violate(ViolationCorruptFrame, name, lsn, "transfer payload does not decode: %v", derr)
 					continue
 				}
-				if b := balances[tr.DebitAccountID]; b != nil {
-					b.debits += tr.Amount.Lo
+				deb := balances[tr.DebitAccountID]
+				cred := balances[tr.CreditAccountID]
+				if deb != nil {
+					deb.debits += tr.Amount.Lo
 				} else {
 					violate(ViolationConservation, name, lsn, "transfer debits unknown account %x", tr.DebitAccountID)
 				}
-				if b := balances[tr.CreditAccountID]; b != nil {
-					b.credits += tr.Amount.Lo
+				if cred != nil {
+					cred.credits += tr.Amount.Lo
 				} else {
 					violate(ViolationConservation, name, lsn, "transfer credits unknown account %x", tr.CreditAccountID)
+				}
+				if deb != nil && cred != nil {
+					if deb.ledger != tr.Ledger || cred.ledger != tr.Ledger {
+						violate(ViolationConservation, name, lsn,
+							"transfer ledger %d != debit ledger %d or credit ledger %d", tr.Ledger, deb.ledger, cred.ledger)
+					}
 				}
 				if tr.IdempotencyKey != ([32]byte{}) {
 					if prev, ok := keys[tr.IdempotencyKey]; ok && prev != tr.ID {
@@ -194,12 +206,12 @@ func Audit(dir string) (Report, error) {
 					pendingCount++
 					continue
 				}
-				balances[acc.ID] = &bal{credits: acc.PostedCredits.Lo, debits: acc.PostedDebits.Lo}
+				balances[acc.ID] = &bal{credits: acc.PostedCredits.Lo, debits: acc.PostedDebits.Lo, ledger: acc.Ledger}
 				if acc.PostedDebits.Lo > acc.PostedCredits.Lo {
 					violate(ViolationConservation, name, lsn,
 						"account %x created with debits %d > credits %d", acc.ID, acc.PostedDebits.Lo, acc.PostedCredits.Lo)
 				}
-				injected += acc.PostedCredits.Lo - acc.PostedDebits.Lo
+				injectedPerLedger[acc.Ledger] += acc.PostedCredits.Lo - acc.PostedDebits.Lo
 				pendingCount++
 			case 4: // batch commit
 				rep.Batches++
@@ -220,20 +232,22 @@ func Audit(dir string) (Report, error) {
 		}
 	}
 
-	// Final conservation: every balance non-negative; the system-wide balance
-	// equals what account creation injected (transfers only move funds).
-	var total uint64
+	// Final conservation: every balance non-negative; the balance equals
+	// what account creation injected strictly per-ledger (D1.4).
+	totalPerLedger := map[uint32]uint64{}
 	for id, b := range balances {
 		if b.debits > b.credits {
 			violate(ViolationConservation, "", 0,
-				"account %x ends with debits %d > credits %d", id, b.debits, b.credits)
+				"account %x (ledger %d) ends with debits %d > credits %d", id, b.ledger, b.debits, b.credits)
 			continue
 		}
-		total += b.credits - b.debits
+		totalPerLedger[b.ledger] += b.credits - b.debits
 	}
-	if len(balances) > 0 && total != injected {
-		violate(ViolationConservation, "", 0,
-			"system balance %d != credits injected at account creation %d", total, injected)
+	for ledg, inj := range injectedPerLedger {
+		if tot := totalPerLedger[ledg]; tot != inj {
+			violate(ViolationConservation, "", 0,
+				"ledger %d balance %d != credits injected at account creation %d", ledg, tot, inj)
+		}
 	}
 
 	return rep, nil

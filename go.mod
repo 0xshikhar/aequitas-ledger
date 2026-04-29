@@ -1,13 +1,15 @@
 module aequitas-ledger
 
-go 1.25.0
+go 1.23.0
 
 require (
-	github.com/jackc/pgx/v5 v5.10.0
-	github.com/prometheus/client_golang v1.24.1
-	google.golang.org/grpc v1.83.0
-	google.golang.org/protobuf v1.36.11
+	github.com/jackc/pgx/v5 v5.5.5
+	github.com/prometheus/client_golang v1.19.1
+	google.golang.org/grpc v1.64.0
+	google.golang.org/protobuf v1.36.6
 )
+
+require golang.org/x/crypto v0.24.0 // indirect
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -17,11 +19,11 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.70.1 // indirect
-	github.com/prometheus/procfs v0.21.1 // indirect
-	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
+	github.com/prometheus/common v0.55.0 // indirect
+	github.com/prometheus/procfs v0.15.1 // indirect
+	golang.org/x/net v0.26.0 // indirect
+	golang.org/x/sync v0.7.0 // indirect
+	golang.org/x/sys v0.22.0
+	golang.org/x/text v0.16.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240528184218-531527333157 // indirect
 )

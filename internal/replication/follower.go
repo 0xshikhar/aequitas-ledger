@@ -259,6 +259,9 @@ func (f *Follower) SetTLSConfig(cfg *tls.Config) {
 }
 
 func (f *Follower) syncLoop() error {
+	f.pending = f.pending[:0]
+	defer func() { f.pending = f.pending[:0] }()
+
 	var conn net.Conn
 	var err error
 	if f.tlsConfig != nil {

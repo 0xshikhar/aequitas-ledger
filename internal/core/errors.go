@@ -139,3 +139,41 @@ func (e ErrTransferNotFound) Error() string {
 	return fmt.Sprintf("transfer not found: %x", e.TransferID)
 }
 
+type ErrDuplicateTransferID struct{ TransferID [16]byte }
+
+func (e ErrDuplicateTransferID) Error() string {
+	return fmt.Sprintf("duplicate transfer id: %x", e.TransferID)
+}
+
+type ErrLedgerMismatch struct {
+	TransferLedger uint32
+	DebitLedger    uint32
+	CreditLedger   uint32
+}
+
+func (e ErrLedgerMismatch) Error() string {
+	return fmt.Sprintf("ledger mismatch: transfer ledger=%d, debit ledger=%d, credit ledger=%d",
+		e.TransferLedger, e.DebitLedger, e.CreditLedger)
+}
+
+type ErrLinkedChainFailed struct {
+	FailedTransferID [16]byte
+	Index            int
+	Reason           string
+}
+
+func (e ErrLinkedChainFailed) Error() string {
+	return fmt.Sprintf("linked transfer failed: transfer %x (index %d) failed: %s",
+		e.FailedTransferID, e.Index, e.Reason)
+}
+
+type ErrLinkedChainOpen struct {
+	TransferID [16]byte
+	Index      int
+}
+
+func (e ErrLinkedChainOpen) Error() string {
+	return fmt.Sprintf("linked transfer chain open: transfer %x (index %d) is the last in batch but has flag_linked set",
+		e.TransferID, e.Index)
+}
+
