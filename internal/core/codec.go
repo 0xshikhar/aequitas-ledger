@@ -6,11 +6,12 @@ import (
 )
 
 const (
-	// TransferPayloadSize: 16+16+16+16+32+8(ts)+8(timeout)+4(flags) = 116.
-	TransferPayloadSize = 116
-	// AccountPayloadSize matches core.AccountStructSize (96): the two pending
-	// balance fields joined the struct in D1.2 (snapshot format v2).
-	AccountPayloadSize = 96
+	// TransferPayloadSize matches TransferStructSize = 144 bytes:
+	// 16(ID) + 16(Debit) + 16(Credit) + 16(Amount) + 32(Idemp) + 16(UserData) + 8(TS) + 8(Timeout) + 4(Ledger) + 2(Code) + 2(pad) + 4(Flags) + 4(pad) = 144.
+	TransferPayloadSize = 144
+	// AccountPayloadSize matches AccountStructSize = 128 bytes:
+	// 16(ID) + 4(Curr) + 4(Ledger) + 2(Code) + 2(pad) + 4(Flags) + 16(UserData) + 16(Debits) + 16(Credits) + 16(PendDebits) + 16(PendCredits) + 16(pad) = 128.
+	AccountPayloadSize = 128
 )
 
 var (
@@ -43,11 +44,20 @@ func AppendTransferPayload(dst []byte, t Transfer) []byte {
 	off += 16
 	copy(b[off:off+32], t.IdempotencyKey[:])
 	off += 32
+	copy(b[off:off+16], t.UserData128[:])
+	off += 16
 	binary.BigEndian.PutUint64(b[off:off+8], uint64(t.Timestamp))
 	off += 8
 	binary.BigEndian.PutUint64(b[off:off+8], t.Timeout)
 	off += 8
+	binary.BigEndian.PutUint32(b[off:off+4], t.Ledger)
+	off += 4
+	binary.BigEndian.PutUint16(b[off:off+2], t.Code)
+	off += 2
+	off += 2 // 2 bytes padding
 	binary.BigEndian.PutUint32(b[off:off+4], t.Flags)
+	off += 4
+	// 4 bytes trailing padding already zeroed
 	return b
 }
 
@@ -70,10 +80,17 @@ func DecodeTransferPayload(b []byte) (Transfer, error) {
 	off += 16
 	copy(t.IdempotencyKey[:], b[off:off+32])
 	off += 32
+	copy(t.UserData128[:], b[off:off+16])
+	off += 16
 	t.Timestamp = int64(binary.BigEndian.Uint64(b[off : off+8]))
 	off += 8
 	t.Timeout = binary.BigEndian.Uint64(b[off : off+8])
 	off += 8
+	t.Ledger = binary.BigEndian.Uint32(b[off : off+4])
+	off += 4
+	t.Code = binary.BigEndian.Uint16(b[off : off+2])
+	off += 2
+	off += 2 // skip 2 bytes padding
 	t.Flags = binary.BigEndian.Uint32(b[off : off+4])
 	return t, nil
 }
@@ -96,6 +113,15 @@ func AppendAccountPayload(dst []byte, a Account) []byte {
 	off += 16
 	copy(b[off:off+4], a.Currency[:])
 	off += 4
+	binary.BigEndian.PutUint32(b[off:off+4], a.Ledger)
+	off += 4
+	binary.BigEndian.PutUint16(b[off:off+2], a.Code)
+	off += 2
+	off += 2 // 2 bytes padding
+	binary.BigEndian.PutUint32(b[off:off+4], a.Flags)
+	off += 4
+	copy(b[off:off+16], a.UserData128[:])
+	off += 16
 	binary.BigEndian.PutUint64(b[off:off+8], a.PostedDebits.Hi)
 	binary.BigEndian.PutUint64(b[off+8:off+16], a.PostedDebits.Lo)
 	off += 16
@@ -108,7 +134,7 @@ func AppendAccountPayload(dst []byte, a Account) []byte {
 	binary.BigEndian.PutUint64(b[off:off+8], a.PendingCredits.Hi)
 	binary.BigEndian.PutUint64(b[off+8:off+16], a.PendingCredits.Lo)
 	off += 16
-	binary.BigEndian.PutUint32(b[off:off+4], a.Flags)
+	// 16 bytes reserved already zeroed
 	return b
 }
 
@@ -122,6 +148,15 @@ func DecodeAccountPayload(b []byte) (Account, error) {
 	off += 16
 	copy(a.Currency[:], b[off:off+4])
 	off += 4
+	a.Ledger = binary.BigEndian.Uint32(b[off : off+4])
+	off += 4
+	a.Code = binary.BigEndian.Uint16(b[off : off+2])
+	off += 2
+	off += 2 // skip 2 bytes padding
+	a.Flags = binary.BigEndian.Uint32(b[off : off+4])
+	off += 4
+	copy(a.UserData128[:], b[off:off+16])
+	off += 16
 	a.PostedDebits = Uint128{
 		Hi: binary.BigEndian.Uint64(b[off : off+8]),
 		Lo: binary.BigEndian.Uint64(b[off+8 : off+16]),
@@ -141,7 +176,5 @@ func DecodeAccountPayload(b []byte) (Account, error) {
 		Hi: binary.BigEndian.Uint64(b[off : off+8]),
 		Lo: binary.BigEndian.Uint64(b[off+8 : off+16]),
 	}
-	off += 16
-	a.Flags = binary.BigEndian.Uint32(b[off : off+4])
 	return a, nil
 }

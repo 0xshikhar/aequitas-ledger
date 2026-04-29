@@ -16,11 +16,11 @@ import (
 )
 
 const (
-	// MagicHeader v2: account payloads grew to 96 bytes (pending balances,
-	// D1.2) and the snapshot gained a pending-transfers section. v1 files
-	// are refused at load (fail-fast on unknown formats — P5.7).
-	MagicHeader = "LEDGER02"
-	AccountSize = 96
+	// MagicHeader v3: account payloads grew to 128 bytes (Ledger, Code, UserData128,
+	// D1.4) and transfer payloads to 144 bytes. v1/v2 files are refused at load
+	// (fail-fast on unknown formats — P5.7).
+	MagicHeader = "LEDGER03"
+	AccountSize = 128
 )
 
 var (

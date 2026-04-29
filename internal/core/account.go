@@ -12,28 +12,32 @@ const (
 // carrying FlagPostPending or FlagVoidPending with the SAME id as an open
 // pending transfer settles or releases it (optionally partially, by Amount).
 const (
-	TransferFlagPending       uint32 = 1 << iota
+	TransferFlagPending     uint32 = 1 << iota
 	TransferFlagPostPending
 	TransferFlagVoidPending
+	TransferFlagLinked
 )
 
-// Account carries posted balances plus pending (hold) balances. A pending
-// debit reserves funds before they move; PendingCredits is the mirror side
-// for holds that credit an account (e.g. an expected inbound settlement).
+// Account carries posted balances plus pending (hold) balances, along with
+// multi-tenant Ledger ID (D1.4), chart-of-accounts Code, and correlation UserData128.
 type Account struct {
 	ID             [16]byte
 	Currency       [4]byte
+	Ledger         uint32
+	Code           uint16
+	_              [2]byte
+	Flags          uint32
+	UserData128    [16]byte
 	PostedDebits   Uint128
 	PostedCredits  Uint128
 	PendingDebits  Uint128
 	PendingCredits Uint128
-	Flags          uint32
-	_              [4]byte
+	_              [16]byte
 }
 
 // AccountPayloadSize must match Account's in-memory size: the compile-time
 // guard below enforces it.
-const AccountStructSize = 96
+const AccountStructSize = 128
 
 // Balance returns posted credits − posted debits. A negative balance means
 // the account's stored state violates the ledger's non-negative-balance
