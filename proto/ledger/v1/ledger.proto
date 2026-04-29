@@ -19,6 +19,10 @@ message Account {
   Money pending_credits = 6;
   Money balance = 7;
   Money available_balance = 8;
+  uint32 ledger = 9;
+  uint32 code = 10;
+  bytes user_data128 = 11;
+  uint32 flags = 12;
 }
 
 message Transfer {
@@ -30,12 +34,19 @@ message Transfer {
   int64 created_at = 6;
   uint32 flags = 7;
   uint64 timeout = 8;
+  uint32 ledger = 9;
+  uint32 code = 10;
+  bytes user_data128 = 11;
 }
 
 message CreateAccountRequest {
   bytes id = 1;
   string currency = 2;
   Money initial_posted_credits = 3;
+  uint32 ledger = 4;
+  uint32 code = 5;
+  bytes user_data128 = 6;
+  uint32 flags = 7;
 }
 
 message CreateAccountResponse {
@@ -58,6 +69,9 @@ message CreateTransferRequest {
   bytes idempotency_key = 5;
   uint32 flags = 6;
   uint64 timeout = 7;
+  uint32 ledger = 8;
+  uint32 code = 9;
+  bytes user_data128 = 10;
 }
 
 message CreateTransferResponse {

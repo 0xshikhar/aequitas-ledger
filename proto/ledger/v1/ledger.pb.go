@@ -84,6 +84,10 @@ type Account struct {
 	PendingCredits   *Money                 `protobuf:"bytes,6,opt,name=pending_credits,json=pendingCredits,proto3" json:"pending_credits,omitempty"`
 	Balance          *Money                 `protobuf:"bytes,7,opt,name=balance,proto3" json:"balance,omitempty"`
 	AvailableBalance *Money                 `protobuf:"bytes,8,opt,name=available_balance,json=availableBalance,proto3" json:"available_balance,omitempty"`
+	Ledger           uint32                 `protobuf:"varint,9,opt,name=ledger,proto3" json:"ledger,omitempty"`
+	Code             uint32                 `protobuf:"varint,10,opt,name=code,proto3" json:"code,omitempty"`
+	UserData128      []byte                 `protobuf:"bytes,11,opt,name=user_data128,json=userData128,proto3" json:"user_data128,omitempty"`
+	Flags            uint32                 `protobuf:"varint,12,opt,name=flags,proto3" json:"flags,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -174,6 +178,34 @@ func (x *Account) GetAvailableBalance() *Money {
 	return nil
 }
 
+func (x *Account) GetLedger() uint32 {
+	if x != nil {
+		return x.Ledger
+	}
+	return 0
+}
+
+func (x *Account) GetCode() uint32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *Account) GetUserData128() []byte {
+	if x != nil {
+		return x.UserData128
+	}
+	return nil
+}
+
+func (x *Account) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
+}
+
 type Transfer struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Id              []byte                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -184,6 +216,9 @@ type Transfer struct {
 	CreatedAt       int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	Flags           uint32                 `protobuf:"varint,7,opt,name=flags,proto3" json:"flags,omitempty"`
 	Timeout         uint64                 `protobuf:"varint,8,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	Ledger          uint32                 `protobuf:"varint,9,opt,name=ledger,proto3" json:"ledger,omitempty"`
+	Code            uint32                 `protobuf:"varint,10,opt,name=code,proto3" json:"code,omitempty"`
+	UserData128     []byte                 `protobuf:"bytes,11,opt,name=user_data128,json=userData128,proto3" json:"user_data128,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -274,11 +309,36 @@ func (x *Transfer) GetTimeout() uint64 {
 	return 0
 }
 
+func (x *Transfer) GetLedger() uint32 {
+	if x != nil {
+		return x.Ledger
+	}
+	return 0
+}
+
+func (x *Transfer) GetCode() uint32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *Transfer) GetUserData128() []byte {
+	if x != nil {
+		return x.UserData128
+	}
+	return nil
+}
+
 type CreateAccountRequest struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	Id                   []byte                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Currency             string                 `protobuf:"bytes,2,opt,name=currency,proto3" json:"currency,omitempty"`
 	InitialPostedCredits *Money                 `protobuf:"bytes,3,opt,name=initial_posted_credits,json=initialPostedCredits,proto3" json:"initial_posted_credits,omitempty"`
+	Ledger               uint32                 `protobuf:"varint,4,opt,name=ledger,proto3" json:"ledger,omitempty"`
+	Code                 uint32                 `protobuf:"varint,5,opt,name=code,proto3" json:"code,omitempty"`
+	UserData128          []byte                 `protobuf:"bytes,6,opt,name=user_data128,json=userData128,proto3" json:"user_data128,omitempty"`
+	Flags                uint32                 `protobuf:"varint,7,opt,name=flags,proto3" json:"flags,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -332,6 +392,34 @@ func (x *CreateAccountRequest) GetInitialPostedCredits() *Money {
 		return x.InitialPostedCredits
 	}
 	return nil
+}
+
+func (x *CreateAccountRequest) GetLedger() uint32 {
+	if x != nil {
+		return x.Ledger
+	}
+	return 0
+}
+
+func (x *CreateAccountRequest) GetCode() uint32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *CreateAccountRequest) GetUserData128() []byte {
+	if x != nil {
+		return x.UserData128
+	}
+	return nil
+}
+
+func (x *CreateAccountRequest) GetFlags() uint32 {
+	if x != nil {
+		return x.Flags
+	}
+	return 0
 }
 
 type CreateAccountResponse struct {
@@ -475,6 +563,9 @@ type CreateTransferRequest struct {
 	IdempotencyKey  []byte                 `protobuf:"bytes,5,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
 	Flags           uint32                 `protobuf:"varint,6,opt,name=flags,proto3" json:"flags,omitempty"`
 	Timeout         uint64                 `protobuf:"varint,7,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	Ledger          uint32                 `protobuf:"varint,8,opt,name=ledger,proto3" json:"ledger,omitempty"`
+	Code            uint32                 `protobuf:"varint,9,opt,name=code,proto3" json:"code,omitempty"`
+	UserData128     []byte                 `protobuf:"bytes,10,opt,name=user_data128,json=userData128,proto3" json:"user_data128,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -556,6 +647,27 @@ func (x *CreateTransferRequest) GetTimeout() uint64 {
 		return x.Timeout
 	}
 	return 0
+}
+
+func (x *CreateTransferRequest) GetLedger() uint32 {
+	if x != nil {
+		return x.Ledger
+	}
+	return 0
+}
+
+func (x *CreateTransferRequest) GetCode() uint32 {
+	if x != nil {
+		return x.Code
+	}
+	return 0
+}
+
+func (x *CreateTransferRequest) GetUserData128() []byte {
+	if x != nil {
+		return x.UserData128
+	}
+	return nil
 }
 
 type CreateTransferResponse struct {
@@ -1105,7 +1217,7 @@ const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
 	"\x1cproto/ledger/v1/ledger.proto\x12\tledger.v1\"'\n" +
 	"\x05Money\x12\x0e\n" +
 	"\x02lo\x18\x01 \x01(\x04R\x02lo\x12\x0e\n" +
-	"\x02hi\x18\x02 \x01(\x04R\x02hi\"\x84\x03\n" +
+	"\x02hi\x18\x02 \x01(\x04R\x02hi\"\xe9\x03\n" +
 	"\aAccount\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x1a\n" +
 	"\bcurrency\x18\x02 \x01(\tR\bcurrency\x125\n" +
@@ -1114,7 +1226,12 @@ const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
 	"\x0epending_debits\x18\x05 \x01(\v2\x10.ledger.v1.MoneyR\rpendingDebits\x129\n" +
 	"\x0fpending_credits\x18\x06 \x01(\v2\x10.ledger.v1.MoneyR\x0ependingCredits\x12*\n" +
 	"\abalance\x18\a \x01(\v2\x10.ledger.v1.MoneyR\abalance\x12=\n" +
-	"\x11available_balance\x18\b \x01(\v2\x10.ledger.v1.MoneyR\x10availableBalance\"\x92\x02\n" +
+	"\x11available_balance\x18\b \x01(\v2\x10.ledger.v1.MoneyR\x10availableBalance\x12\x16\n" +
+	"\x06ledger\x18\t \x01(\rR\x06ledger\x12\x12\n" +
+	"\x04code\x18\n" +
+	" \x01(\rR\x04code\x12!\n" +
+	"\fuser_data128\x18\v \x01(\fR\vuserData128\x12\x14\n" +
+	"\x05flags\x18\f \x01(\rR\x05flags\"\xe1\x02\n" +
 	"\bTransfer\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12(\n" +
 	"\x10debit_account_id\x18\x02 \x01(\fR\x0edebitAccountId\x12*\n" +
@@ -1124,17 +1241,25 @@ const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x06 \x01(\x03R\tcreatedAt\x12\x14\n" +
 	"\x05flags\x18\a \x01(\rR\x05flags\x12\x18\n" +
-	"\atimeout\x18\b \x01(\x04R\atimeout\"\x8a\x01\n" +
+	"\atimeout\x18\b \x01(\x04R\atimeout\x12\x16\n" +
+	"\x06ledger\x18\t \x01(\rR\x06ledger\x12\x12\n" +
+	"\x04code\x18\n" +
+	" \x01(\rR\x04code\x12!\n" +
+	"\fuser_data128\x18\v \x01(\fR\vuserData128\"\xef\x01\n" +
 	"\x14CreateAccountRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12\x1a\n" +
 	"\bcurrency\x18\x02 \x01(\tR\bcurrency\x12F\n" +
-	"\x16initial_posted_credits\x18\x03 \x01(\v2\x10.ledger.v1.MoneyR\x14initialPostedCredits\"E\n" +
+	"\x16initial_posted_credits\x18\x03 \x01(\v2\x10.ledger.v1.MoneyR\x14initialPostedCredits\x12\x16\n" +
+	"\x06ledger\x18\x04 \x01(\rR\x06ledger\x12\x12\n" +
+	"\x04code\x18\x05 \x01(\rR\x04code\x12!\n" +
+	"\fuser_data128\x18\x06 \x01(\fR\vuserData128\x12\x14\n" +
+	"\x05flags\x18\a \x01(\rR\x05flags\"E\n" +
 	"\x15CreateAccountResponse\x12,\n" +
 	"\aaccount\x18\x01 \x01(\v2\x12.ledger.v1.AccountR\aaccount\"#\n" +
 	"\x11GetAccountRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\"B\n" +
 	"\x12GetAccountResponse\x12,\n" +
-	"\aaccount\x18\x01 \x01(\v2\x12.ledger.v1.AccountR\aaccount\"\x80\x02\n" +
+	"\aaccount\x18\x01 \x01(\v2\x12.ledger.v1.AccountR\aaccount\"\xcf\x02\n" +
 	"\x15CreateTransferRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\fR\x02id\x12(\n" +
 	"\x10debit_account_id\x18\x02 \x01(\fR\x0edebitAccountId\x12*\n" +
@@ -1142,7 +1267,11 @@ const file_proto_ledger_v1_ledger_proto_rawDesc = "" +
 	"\x06amount\x18\x04 \x01(\v2\x10.ledger.v1.MoneyR\x06amount\x12'\n" +
 	"\x0fidempotency_key\x18\x05 \x01(\fR\x0eidempotencyKey\x12\x14\n" +
 	"\x05flags\x18\x06 \x01(\rR\x05flags\x12\x18\n" +
-	"\atimeout\x18\a \x01(\x04R\atimeout\"I\n" +
+	"\atimeout\x18\a \x01(\x04R\atimeout\x12\x16\n" +
+	"\x06ledger\x18\b \x01(\rR\x06ledger\x12\x12\n" +
+	"\x04code\x18\t \x01(\rR\x04code\x12!\n" +
+	"\fuser_data128\x18\n" +
+	" \x01(\fR\vuserData128\"I\n" +
 	"\x16CreateTransferResponse\x12/\n" +
 	"\btransfer\x18\x01 \x01(\v2\x13.ledger.v1.TransferR\btransfer\"g\n" +
 	"\x0eTransferResult\x12\x0e\n" +

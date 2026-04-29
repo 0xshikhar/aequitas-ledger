@@ -40,10 +40,19 @@ func (h *AccountsHandler) CreateAccount(ctx context.Context, req *ledgerv1.Creat
 		postedCredits = core.Uint128{Lo: req.InitialPostedCredits.Lo, Hi: req.InitialPostedCredits.Hi}
 	}
 
+	var userData [16]byte
+	if len(req.UserData128) > 0 {
+		copy(userData[:], req.UserData128)
+	}
+
 	acc := core.Account{
 		ID:            accID,
 		Currency:      currency,
 		PostedCredits: postedCredits,
+		Ledger:        req.Ledger,
+		Code:          uint16(req.Code),
+		UserData128:   userData,
+		Flags:         req.Flags,
 	}
 
 	created, err := h.ledger.CreateAccount(ctx, acc)
@@ -129,6 +138,11 @@ func (h *AccountsHandler) CreateTransfer(ctx context.Context, req *ledgerv1.Crea
 		key = ctxKey
 	}
 
+	var trUserData [16]byte
+	if len(req.UserData128) > 0 {
+		copy(trUserData[:], req.UserData128)
+	}
+
 	tr := core.Transfer{
 		ID:              trID,
 		DebitAccountID:  debitID,
@@ -137,6 +151,9 @@ func (h *AccountsHandler) CreateTransfer(ctx context.Context, req *ledgerv1.Crea
 		IdempotencyKey:  key,
 		Flags:           req.Flags,
 		Timeout:         req.Timeout,
+		Ledger:          req.Ledger,
+		Code:            uint16(req.Code),
+		UserData128:     trUserData,
 	}
 
 	res, err := h.ledger.CreateTransfer(ctx, tr)
@@ -192,6 +209,11 @@ func (h *AccountsHandler) CreateTransfers(ctx context.Context, req *ledgerv1.Cre
 			}
 		}
 
+		var trUserData [16]byte
+		if len(pt.UserData128) > 0 {
+			copy(trUserData[:], pt.UserData128)
+		}
+
 		batch[i] = core.Transfer{
 			ID:              trID,
 			DebitAccountID:  debitID,
@@ -200,6 +222,9 @@ func (h *AccountsHandler) CreateTransfers(ctx context.Context, req *ledgerv1.Cre
 			IdempotencyKey:  key,
 			Flags:           pt.Flags,
 			Timeout:         pt.Timeout,
+			Ledger:          pt.Ledger,
+			Code:            uint16(pt.Code),
+			UserData128:     trUserData,
 		}
 	}
 
@@ -250,7 +275,21 @@ func (h *AccountsHandler) CreateAccounts(ctx context.Context, req *ledgerv1.Crea
 		if pa.InitialPostedCredits != nil {
 			postedCredits = core.Uint128{Lo: pa.InitialPostedCredits.Lo, Hi: pa.InitialPostedCredits.Hi}
 		}
-		batch[i] = core.Account{ID: accID, Currency: currency, PostedCredits: postedCredits}
+
+		var accUserData [16]byte
+		if len(pa.UserData128) > 0 {
+			copy(accUserData[:], pa.UserData128)
+		}
+
+		batch[i] = core.Account{
+			ID:            accID,
+			Currency:      currency,
+			PostedCredits: postedCredits,
+			Ledger:        pa.Ledger,
+			Code:          uint16(pa.Code),
+			UserData128:   accUserData,
+			Flags:         pa.Flags,
+		}
 	}
 
 	outcomes, err := h.ledger.CreateAccounts(ctx, batch)
@@ -340,6 +379,9 @@ func coreTransferToProto(t core.Transfer) *ledgerv1.Transfer {
 		CreatedAt:       t.Timestamp,
 		Flags:           t.Flags,
 		Timeout:         t.Timeout,
+		Ledger:          t.Ledger,
+		Code:            uint32(t.Code),
+		UserData128:     t.UserData128[:],
 	}
 }
 
@@ -377,6 +419,22 @@ func transferErrorStatus(err error) (codes.Code, string) {
 	if errors.As(err, &overTransfer) {
 		return codes.FailedPrecondition, err.Error()
 	}
+	var ledgerMismatch core.ErrLedgerMismatch
+	if errors.As(err, &ledgerMismatch) {
+		return codes.InvalidArgument, err.Error()
+	}
+	var chainFailed core.ErrLinkedChainFailed
+	if errors.As(err, &chainFailed) {
+		return codes.Aborted, err.Error()
+	}
+	var chainOpen core.ErrLinkedChainOpen
+	if errors.As(err, &chainOpen) {
+		return codes.InvalidArgument, err.Error()
+	}
+	var dupTransfer core.ErrDuplicateTransferID
+	if errors.As(err, &dupTransfer) {
+		return codes.AlreadyExists, err.Error()
+	}
 	return codes.Internal, err.Error()
 }
 
@@ -410,5 +468,9 @@ func coreAccountToProto(acc core.Account) (*ledgerv1.Account, error) {
 		PendingCredits:   &ledgerv1.Money{Lo: acc.PendingCredits.Lo, Hi: acc.PendingCredits.Hi},
 		Balance:          &ledgerv1.Money{Lo: bal.Lo, Hi: bal.Hi},
 		AvailableBalance: &ledgerv1.Money{Lo: avail.Lo, Hi: avail.Hi},
+		Ledger:           acc.Ledger,
+		Code:             uint32(acc.Code),
+		UserData128:      acc.UserData128[:],
+		Flags:            acc.Flags,
 	}, nil
 }

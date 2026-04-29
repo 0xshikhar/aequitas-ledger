@@ -80,6 +80,10 @@ type createAccountReq struct {
 	ID             string `json:"id"`
 	Currency       string `json:"currency"`
 	InitialCredits string `json:"initial_credits"`
+	Ledger         uint32 `json:"ledger,omitempty"`
+	Code           uint16 `json:"code,omitempty"`
+	UserData128    string `json:"user_data128,omitempty"`
+	Flags          uint32 `json:"flags,omitempty"`
 }
 
 type accountResp struct {
@@ -91,6 +95,10 @@ type accountResp struct {
 	PendingCredits   string `json:"pending_credits"`
 	Balance          string `json:"balance"`
 	AvailableBalance string `json:"available_balance"`
+	Ledger           uint32 `json:"ledger,omitempty"`
+	Code             uint16 `json:"code,omitempty"`
+	UserData128      string `json:"user_data128,omitempty"`
+	Flags            uint32 `json:"flags,omitempty"`
 }
 
 func (s *RESTServer) handleAccounts(w http.ResponseWriter, r *http.Request) {
@@ -124,10 +132,19 @@ func (s *RESTServer) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		initialCredits = ic
 	}
 
+	var userData [16]byte
+	if req.UserData128 != "" {
+		userData = parseUserData(req.UserData128)
+	}
+
 	acc := core.Account{
 		ID:            accID,
 		Currency:      curr,
 		PostedCredits: initialCredits,
+		Ledger:        req.Ledger,
+		Code:          req.Code,
+		UserData128:   userData,
+		Flags:         req.Flags,
 	}
 
 	created, err := s.ledger.CreateAccount(r.Context(), acc)
@@ -209,6 +226,9 @@ type createTransferReq struct {
 	IdempotencyKey  string `json:"idempotency_key"`
 	Flags           uint32 `json:"flags,omitempty"`
 	Timeout         uint64 `json:"timeout,omitempty"`
+	Ledger          uint32 `json:"ledger,omitempty"`
+	Code            uint16 `json:"code,omitempty"`
+	UserData128     string `json:"user_data128,omitempty"`
 }
 
 type transferResp struct {
@@ -220,6 +240,9 @@ type transferResp struct {
 	Flags           uint32 `json:"flags,omitempty"`
 	Timeout         uint64 `json:"timeout,omitempty"`
 	CreatedAt       int64  `json:"created_at,omitempty"`
+	Ledger          uint32 `json:"ledger,omitempty"`
+	Code            uint16 `json:"code,omitempty"`
+	UserData128     string `json:"user_data128,omitempty"`
 }
 
 func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request) {
@@ -275,6 +298,11 @@ func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request
 		key = sha256.Sum256([]byte(idempHeader))
 	}
 
+	var userData [16]byte
+	if req.UserData128 != "" {
+		userData = parseUserData(req.UserData128)
+	}
+
 	tr := core.Transfer{
 		ID:              trID,
 		DebitAccountID:  debitID,
@@ -283,6 +311,9 @@ func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request
 		IdempotencyKey:  key,
 		Flags:           req.Flags,
 		Timeout:         req.Timeout,
+		Ledger:          req.Ledger,
+		Code:            req.Code,
+		UserData128:     userData,
 	}
 
 	res, err := s.ledger.CreateTransfer(r.Context(), tr)
@@ -318,6 +349,26 @@ func (s *RESTServer) handleCreateTransfer(w http.ResponseWriter, r *http.Request
 		var insufficient core.ErrInsufficientFunds
 		if errors.As(err, &insufficient) {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		var ledgerMismatch core.ErrLedgerMismatch
+		if errors.As(err, &ledgerMismatch) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var chainFailed core.ErrLinkedChainFailed
+		if errors.As(err, &chainFailed) {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		var chainOpen core.ErrLinkedChainOpen
+		if errors.As(err, &chainOpen) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var dupTransfer core.ErrDuplicateTransferID
+		if errors.As(err, &dupTransfer) {
+			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -426,6 +477,10 @@ func (s *RESTServer) parseTransferReq(req *createTransferReq) (core.Transfer, er
 	if req.IdempotencyKey != "" {
 		key = sha256.Sum256([]byte(req.IdempotencyKey))
 	}
+	var userData [16]byte
+	if req.UserData128 != "" {
+		userData = parseUserData(req.UserData128)
+	}
 	return core.Transfer{
 		ID:              trID,
 		DebitAccountID:  debitID,
@@ -434,6 +489,9 @@ func (s *RESTServer) parseTransferReq(req *createTransferReq) (core.Transfer, er
 		IdempotencyKey:  key,
 		Flags:           req.Flags,
 		Timeout:         req.Timeout,
+		Ledger:          req.Ledger,
+		Code:            req.Code,
+		UserData128:     userData,
 	}, nil
 }
 
@@ -511,6 +569,9 @@ func formatTransferResp(res core.Transfer) transferResp {
 		Flags:           res.Flags,
 		Timeout:         res.Timeout,
 		CreatedAt:       res.Timestamp,
+		Ledger:          res.Ledger,
+		Code:            res.Code,
+		UserData128:     formatUserData(res.UserData128),
 	}
 }
 
@@ -566,7 +627,21 @@ func (s *RESTServer) handleBatchAccounts(w http.ResponseWriter, r *http.Request)
 			}
 			initialCredits = ic
 		}
-		batch[i] = core.Account{ID: accID, Currency: curr, PostedCredits: initialCredits}
+
+		var userData [16]byte
+		if item.UserData128 != "" {
+			userData = parseUserData(item.UserData128)
+		}
+
+		batch[i] = core.Account{
+			ID:            accID,
+			Currency:      curr,
+			PostedCredits: initialCredits,
+			Ledger:        item.Ledger,
+			Code:          item.Code,
+			UserData128:   userData,
+			Flags:         item.Flags,
+		}
 	}
 
 	outcomes, err := s.ledger.CreateAccounts(r.Context(), batch)
@@ -611,6 +686,27 @@ func parseHexID(s string) ([16]byte, error) {
 	return id, nil
 }
 
+func parseUserData(s string) [16]byte {
+	var ud [16]byte
+	clean := strings.TrimPrefix(s, "0x")
+	if len(clean) == 32 {
+		if decoded, err := hex.DecodeString(clean); err == nil && len(decoded) == 16 {
+			copy(ud[:], decoded)
+			return ud
+		}
+	}
+	copy(ud[:], []byte(s))
+	return ud
+}
+
+func formatUserData(b [16]byte) string {
+	var zero [16]byte
+	if b == zero {
+		return ""
+	}
+	return hex.EncodeToString(b[:])
+}
+
 func formatAccountResp(acc core.Account) (accountResp, error) {
 	bal, err := core.Balance(acc)
 	if err != nil {
@@ -629,6 +725,10 @@ func formatAccountResp(acc core.Account) (accountResp, error) {
 		PendingCredits:   core.String(acc.PendingCredits),
 		Balance:          core.String(bal),
 		AvailableBalance: core.String(avail),
+		Ledger:           acc.Ledger,
+		Code:             acc.Code,
+		UserData128:      formatUserData(acc.UserData128),
+		Flags:            acc.Flags,
 	}, nil
 }
 
