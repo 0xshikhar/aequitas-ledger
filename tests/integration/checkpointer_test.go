@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"encoding/binary"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -56,7 +57,7 @@ func TestBackgroundCheckpointerSnapshotsTruncatesAndReadies(t *testing.T) {
 	batch := make([]core.Transfer, 300)
 	for i := range batch {
 		var trID [16]byte
-		trID[0] = byte(i + 1)
+		binary.BigEndian.PutUint32(trID[:4], uint32(i+1))
 		batch[i] = core.Transfer{ID: trID, DebitAccountID: acc1, CreditAccountID: acc2, Amount: core.Uint128{Lo: 10}}
 	}
 	if _, err := l1.CreateTransfers(ctx, batch); err != nil {
