@@ -222,3 +222,52 @@ func TestAuditDetectsUnknownAccountTransfer(t *testing.T) {
 		t.Fatalf("want unknown-account conservation violation, got %v", rep.Violations)
 	}
 }
+
+func TestAuditTwoPhaseHoldPasses(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "wal")
+	w, err := wal.Open(dir, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	cur := [4]byte{'U', 'S', 'D', 0}
+	accA, accB := [16]byte{0x01}, [16]byte{0x02}
+	holdID := [16]byte{0x50}
+
+	recs := []wal.Record{
+		{Type: wal.RecordTypeAccount, Payload: core.EncodeAccountPayload(core.Account{ID: accA, Currency: cur, PostedCredits: core.Uint128{Lo: 1000}})},
+		{Type: wal.RecordTypeAccount, Payload: core.EncodeAccountPayload(core.Account{ID: accB, Currency: cur})},
+		// Pending hold of 400
+		{Type: wal.RecordTypeTransfer, Payload: core.EncodeTransferPayload(core.Transfer{
+			ID: holdID, DebitAccountID: accA, CreditAccountID: accB,
+			Amount: core.Uint128{Lo: 400}, Flags: core.TransferFlagPending,
+		})},
+		// Partial post of 150
+		{Type: wal.RecordTypeTransfer, Payload: core.EncodeTransferPayload(core.Transfer{
+			ID: holdID, Amount: core.Uint128{Lo: 150}, Flags: core.TransferFlagPostPending,
+		})},
+		// Settle remaining 250
+		{Type: wal.RecordTypeTransfer, Payload: core.EncodeTransferPayload(core.Transfer{
+			ID: holdID, Amount: core.Uint128{Lo: 250}, Flags: core.TransferFlagPostPending,
+		})},
+	}
+	if _, err := w.AppendBatch(recs); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Sync(); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Audit(dir)
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	if !rep.Valid() {
+		t.Fatalf("expected two-phase WAL to be valid, got violations: %v", rep.Violations)
+	}
+	if rep.Transfers != 3 {
+		t.Fatalf("transfers = %d, want 3", rep.Transfers)
+	}
+}
+

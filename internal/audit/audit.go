@@ -108,6 +108,7 @@ func Audit(dir string) (Report, error) {
 	injectedPerLedger := map[uint32]uint64{}
 	keys := map[[32]byte][16]byte{} // idempotency key → transfer ID
 	transferIDs := map[[16]byte]string{}
+	pendingTransfers := map[[16]byte]core.Transfer{}
 
 	pendingCount := 0
 	prevLSN := uint64(0)
@@ -162,35 +163,96 @@ func Audit(dir string) (Report, error) {
 					violate(ViolationCorruptFrame, name, lsn, "transfer payload does not decode: %v", derr)
 					continue
 				}
-				deb := balances[tr.DebitAccountID]
-				cred := balances[tr.CreditAccountID]
-				if deb != nil {
-					deb.debits += tr.Amount.Lo
-				} else {
-					violate(ViolationConservation, name, lsn, "transfer debits unknown account %x", tr.DebitAccountID)
-				}
-				if cred != nil {
-					cred.credits += tr.Amount.Lo
-				} else {
-					violate(ViolationConservation, name, lsn, "transfer credits unknown account %x", tr.CreditAccountID)
-				}
-				if deb != nil && cred != nil {
-					if deb.ledger != tr.Ledger || cred.ledger != tr.Ledger {
+
+				isPending := tr.Flags&core.TransferFlagPending != 0
+				isPost := tr.Flags&core.TransferFlagPostPending != 0
+				isVoid := tr.Flags&core.TransferFlagVoidPending != 0
+
+				if isPost {
+					pend, ok := pendingTransfers[tr.ID]
+					if !ok {
+						violate(ViolationConservation, name, lsn, "post of unknown pending transfer %x", tr.ID)
+						continue
+					}
+					settleAmt := pend.Amount.Lo
+					if tr.Amount.Lo > 0 {
+						if tr.Amount.Lo > pend.Amount.Lo {
+							violate(ViolationConservation, name, lsn, "post amount %d exceeds pending %d", tr.Amount.Lo, pend.Amount.Lo)
+							continue
+						}
+						settleAmt = tr.Amount.Lo
+					}
+					deb := balances[pend.DebitAccountID]
+					cred := balances[pend.CreditAccountID]
+					if deb != nil {
+						deb.debits += settleAmt
+					}
+					if cred != nil {
+						cred.credits += settleAmt
+					}
+					pend.Amount.Lo -= settleAmt
+					if pend.Amount.Lo == 0 {
+						delete(pendingTransfers, tr.ID)
+					} else {
+						pendingTransfers[tr.ID] = pend
+					}
+				} else if isVoid {
+					if _, ok := pendingTransfers[tr.ID]; !ok {
+						violate(ViolationConservation, name, lsn, "void of unknown pending transfer %x", tr.ID)
+						continue
+					}
+					delete(pendingTransfers, tr.ID)
+				} else if isPending {
+					deb := balances[tr.DebitAccountID]
+					cred := balances[tr.CreditAccountID]
+					if deb == nil {
+						violate(ViolationConservation, name, lsn, "transfer debits unknown account %x", tr.DebitAccountID)
+					}
+					if cred == nil {
+						violate(ViolationConservation, name, lsn, "transfer credits unknown account %x", tr.CreditAccountID)
+					}
+					if deb != nil && cred != nil && (deb.ledger != tr.Ledger || cred.ledger != tr.Ledger) {
 						violate(ViolationConservation, name, lsn,
 							"transfer ledger %d != debit ledger %d or credit ledger %d", tr.Ledger, deb.ledger, cred.ledger)
 					}
+					if prevSeg, dup := transferIDs[tr.ID]; dup {
+						violate(ViolationDuplicateKey, name, lsn, "transfer ID %x already seen in %s", tr.ID, prevSeg)
+					} else {
+						transferIDs[tr.ID] = name
+						pendingTransfers[tr.ID] = tr
+					}
+				} else {
+					deb := balances[tr.DebitAccountID]
+					cred := balances[tr.CreditAccountID]
+					if deb != nil {
+						deb.debits += tr.Amount.Lo
+					} else {
+						violate(ViolationConservation, name, lsn, "transfer debits unknown account %x", tr.DebitAccountID)
+					}
+					if cred != nil {
+						cred.credits += tr.Amount.Lo
+					} else {
+						violate(ViolationConservation, name, lsn, "transfer credits unknown account %x", tr.CreditAccountID)
+					}
+					if deb != nil && cred != nil {
+						if deb.ledger != tr.Ledger || cred.ledger != tr.Ledger {
+							violate(ViolationConservation, name, lsn,
+								"transfer ledger %d != debit ledger %d or credit ledger %d", tr.Ledger, deb.ledger, cred.ledger)
+						}
+					}
+					if prevSeg, dup := transferIDs[tr.ID]; dup {
+						violate(ViolationDuplicateKey, name, lsn, "transfer ID %x already seen in %s", tr.ID, prevSeg)
+					} else {
+						transferIDs[tr.ID] = name
+					}
 				}
+
 				if tr.IdempotencyKey != ([32]byte{}) {
 					if prev, ok := keys[tr.IdempotencyKey]; ok && prev != tr.ID {
 						violate(ViolationDuplicateKey, name, lsn, "key used by transfers %x and %x", prev, tr.ID)
 					} else if !ok {
 						keys[tr.IdempotencyKey] = tr.ID
 					}
-				}
-				if prevSeg, dup := transferIDs[tr.ID]; dup {
-					violate(ViolationDuplicateKey, name, lsn, "transfer ID %x already seen in %s", tr.ID, prevSeg)
-				} else {
-					transferIDs[tr.ID] = name
 				}
 				pendingCount++
 			case 2: // account
