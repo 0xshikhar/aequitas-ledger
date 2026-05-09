@@ -3,7 +3,7 @@
 
 GO ?= go
 
-.PHONY: help proto-gen build vet fmt lint test race cover bench bench-smoke panic-gate tidy check clean
+.PHONY: help proto-gen build vet fmt lint test race cover bench bench-smoke panic-gate tidy check clean demo test-all
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -55,3 +55,13 @@ check: fmt vet panic-gate race ## Everything CI runs before lint
 clean: ## Remove build/test artifacts
 	rm -f coverage.out
 	$(GO) clean -testcache
+
+demo: ## Run the end-to-end automated verification harness
+	python3 scripts/run-demo.py
+
+test-all: panic-gate ## Run panic-gate, unit, integration, audit tests, and the demo harness
+	GOTOOLCHAIN=go1.23.6 $(GO) test -count=1 ./tests/unit/...
+	GOTOOLCHAIN=go1.23.6 $(GO) test -count=1 ./internal/audit/...
+	GOTOOLCHAIN=go1.23.6 $(GO) test -count=1 ./tests/integration/...
+	python3 scripts/run-demo.py
+

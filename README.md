@@ -16,7 +16,7 @@
 
 *A high-throughput, crash-safe, single-writer double-entry financial ledger in Go inspired by **TigerBeetle** — featuring 4KB-aligned direct I/O preallocation, two-phase holds, linked transfer chains, multi-tenant isolation, batch-synchronous timestamps, streaming replication with mTLS, and an independent WAL auditor.*
 
-[📖 Architecture Guide](docs/Status.md) • [🚀 Quick Start](#-quick-start--local-deployment) • [⚡ Benchmark Report](docs/benchmark_report.md) • [🧪 Testing & Verification](#-concurrency-benchmark--testing-suite) • [🔐 API Reference Matrix](#-api-reference-matrix) • [📜 Technical Roadmap](docs/ROADMAP.md)
+[🏛️ Architecture Manual](docs/architecture-guide.md) • [🧪 Testing Playbook](docs/testing-guide.md) • [🚀 Quick Start](#-quick-start--local-deployment) • [⚡ Benchmark Report](docs/benchmark_report.md) • [🔐 API Reference Matrix](#-api-reference-matrix) • [📜 Technical Roadmap](docs/ROADMAP.md)
 
 </div>
 
@@ -532,6 +532,13 @@ aequitas-ledger/
 - **Go**: Version 1.22 or higher
 - **Make**: Standard build automation
 - **Docker & Docker Compose** (Optional for container stack)
+
+### 0. Automated End-to-End Verification (One-Click Demo)
+Run the automated 7-step test harness that validates the panic gate, runs codec assertions, boots a live sandboxed engine, tests multi-tenant accounts, exercises two-phase holds and linked chains, and executes the independent WAL auditor:
+```bash
+make demo
+# or: python3 scripts/run-demo.py
+```
 
 ### 1. Build Binaries Locally
 ```bash
