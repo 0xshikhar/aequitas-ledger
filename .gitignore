@@ -2,3 +2,5 @@
 .gotmp
 bench-cli
 data/
+coverage.out
+*.test

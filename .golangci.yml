@@ -1,0 +1,14 @@
+version: "2"
+
+linters:
+  # Opt-in set: correctness first, style second. Extend deliberately — every
+  # added linter must pass on the whole tree, or CI lint becomes noise.
+  default: none
+  enable:
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+issues:
+  exclude-use-default: false

@@ -16,13 +16,13 @@ type TransferExecutor interface {
 }
 
 type Result struct {
-	TotalOps    int64
-	Duration    time.Duration
-	TPS         float64
+	TotalOps   int64
+	Duration   time.Duration
+	TPS        float64
 	P50Latency time.Duration
 	P95Latency time.Duration
 	P99Latency time.Duration
-	ErrorCount  int64
+	ErrorCount int64
 }
 
 type Harness struct {
@@ -102,13 +102,13 @@ func (h *Harness) Run(ctx context.Context, exec TransferExecutor, concurrency in
 	}
 
 	return Result{
-		TotalOps:    ops,
-		Duration:    totalTime,
-		TPS:         tps,
+		TotalOps:   ops,
+		Duration:   totalTime,
+		TPS:        tps,
 		P50Latency: p50,
 		P95Latency: p95,
 		P99Latency: p99,
-		ErrorCount:  errs,
+		ErrorCount: errs,
 	}
 }
 
