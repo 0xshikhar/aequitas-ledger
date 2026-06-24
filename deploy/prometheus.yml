@@ -4,4 +4,5 @@ global:
 scrape_configs:
   - job_name: 'aequitas-ledger'
     static_configs:
-      - targets: ['aequitas-ledger:6060']
+      # Service names from docker-compose.yml (ledger-primary, ledger-follower).
+      - targets: ['ledger-primary:6060', 'ledger-follower:6060']
