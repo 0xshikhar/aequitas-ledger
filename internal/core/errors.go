@@ -71,12 +71,6 @@ type ErrBufferFull struct{}
 
 func (ErrBufferFull) Error() string { return "submission buffer is full" }
 
-type ErrDuplicateTransferID struct{ ID [16]byte }
-
-func (e ErrDuplicateTransferID) Error() string {
-	return fmt.Sprintf("duplicate transfer id: %x", e.ID)
-}
-
 type ErrNotLeader struct{}
 
 func (ErrNotLeader) Error() string { return "node is running as a read-only follower (not leader)" }
@@ -92,4 +86,10 @@ type ErrBatchTooLarge struct {
 
 func (e ErrBatchTooLarge) Error() string {
 	return fmt.Sprintf("batch too large: %d items exceeds maximum of %d", e.Got, e.Max)
+}
+
+type ErrInvalidRingBufferSize struct{ Size int }
+
+func (e ErrInvalidRingBufferSize) Error() string {
+	return fmt.Sprintf("ring buffer size must be a power of two and > 0, got %d", e.Size)
 }

@@ -10,8 +10,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"golang.org/x/net/websocket"
 )
 
 var (
@@ -30,7 +28,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  account get      Get account details by ID\n")
 		fmt.Fprintf(os.Stderr, "  transfer create  Create a new transfer between accounts\n")
 		fmt.Fprintf(os.Stderr, "  info             Get ledger health status\n")
-		fmt.Fprintf(os.Stderr, "  rpc-test         Test Ethereum RPC endpoints (HTTP & WS)\n")
 	}
 
 	flag.Parse()
@@ -60,90 +57,11 @@ func main() {
 		transferCmd(client, args[2:])
 	case "info":
 		infoCmd(client)
-	case "rpc-test":
-		rpcTestCmd(client, args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		flag.Usage()
 		os.Exit(1)
 	}
-}
-
-func rpcTestCmd(client *http.Client, args []string) {
-	fs := flag.NewFlagSet("rpc-test", flag.ExitOnError)
-	rpcURL := fs.String("http", "https://ethereum-mainnet-rpc.crouton.digital", "Ethereum JSON-RPC HTTP endpoint")
-	wsURL := fs.String("ws", "wss://ethereum-mainnet-ws.crouton.digital", "Ethereum JSON-RPC WebSocket endpoint")
-	fs.Parse(args)
-
-	fmt.Printf("=== Testing HTTP RPC Endpoint: %s ===\n", *rpcURL)
-	testHTTPRPC(client, *rpcURL)
-
-	fmt.Printf("\n=== Testing WebSocket RPC Endpoint: %s ===\n", *wsURL)
-	testWSRPC(*wsURL)
-}
-
-func testHTTPRPC(client *http.Client, endpoint string) {
-	reqBody := []byte(`{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}`)
-	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(reqBody))
-	if err != nil {
-		fmt.Printf("[HTTP ERROR] Failed to connect: %v\n", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("[HTTP ERROR] Failed to read body: %v\n", err)
-		return
-	}
-
-	var result struct {
-		JSONRPC string `json:"jsonrpc"`
-		ID      int    `json:"id"`
-		Result  string `json:"result"`
-		Error   *struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-
-	if err := json.Unmarshal(body, &result); err != nil {
-		fmt.Printf("[HTTP SUCCESS] Raw Response: %s\n", string(body))
-		return
-	}
-
-	if result.Error != nil {
-		fmt.Printf("[HTTP RPC ERROR] Code %d: %s\n", result.Error.Code, result.Error.Message)
-		return
-	}
-
-	fmt.Printf("[HTTP SUCCESS] Latest Block Hex: %s\n", result.Result)
-}
-
-func testWSRPC(endpoint string) {
-	ws, err := websocket.Dial(endpoint, "", "http://localhost/")
-	if err != nil {
-		fmt.Printf("[WS ERROR] Failed to connect: %v\n", err)
-		return
-	}
-	defer ws.Close()
-
-	fmt.Println("[WS SUCCESS] Connected successfully. Subscribing to newHeads...")
-	subReq := `{"jsonrpc":"2.0","id":1,"method":"eth_subscribe","params":["newHeads"]}`
-	if _, err := ws.Write([]byte(subReq)); err != nil {
-		fmt.Printf("[WS ERROR] Failed to send subscription request: %v\n", err)
-		return
-	}
-
-	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
-	var buf [4096]byte
-	n, err := ws.Read(buf[:])
-	if err != nil {
-		fmt.Printf("[WS ERROR] Failed to receive payload: %v\n", err)
-		return
-	}
-
-	fmt.Printf("[WS SUCCESS] Received response:\n%s\n", string(buf[:n]))
 }
 
 func accountCmd(client *http.Client, subCmd string, args []string) {

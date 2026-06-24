@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"aequitas-ledger/internal/engine"
@@ -28,11 +29,14 @@ type Config struct {
 
 func Load() Config {
 	cfg := Config{
-		GRPCPort:         getEnv("PORT", "50051"),
-		RESTPort:         getEnv("REST_PORT", "8080"),
-		MetricsPort:      getEnv("METRICS_PORT", "6060"),
-		ReplicationPort:  getEnv("REPLICATION_PORT", "17001"),
-		LedgerRole:       getEnv("LEDGER_ROLE", "primary"),
+		GRPCPort:        getEnv("PORT", "50051"),
+		RESTPort:        getEnv("REST_PORT", "8080"),
+		MetricsPort:     getEnv("METRICS_PORT", "6060"),
+		ReplicationPort: getEnv("REPLICATION_PORT", "17001"),
+		// Role comparisons in cmd/server are lowercase; normalize here so
+		// LEDGER_ROLE=FOLLOWER in deployment manifests (docker-compose, k8s)
+		// means what it says instead of silently booting a second primary.
+		LedgerRole:       strings.ToLower(strings.TrimSpace(getEnv("LEDGER_ROLE", "primary"))),
 		PrimaryAddr:      getEnv("PRIMARY_ADDR", "localhost:17001"),
 		LogLevel:         getEnv("LOG_LEVEL", "info"),
 		LogFormat:        getEnv("LOG_FORMAT", "text"),

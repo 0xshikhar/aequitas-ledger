@@ -21,6 +21,16 @@ func NewBatcher(rb *RingBuffer, maxSize int, timeout time.Duration) *Batcher {
 	return &Batcher{rb: rb, maxBatchSize: maxSize, timeout: timeout}
 }
 
+// Depth reports an approximation of the pending event count (the ring
+// buffer's producer/consumer snapshot may skew by a few events mid-drain).
+// Used for the ringbuffer_depth gauge — scheduling hints, not accounting.
+func (b *Batcher) Depth() int {
+	if b.rb == nil {
+		return 0
+	}
+	return b.rb.Len()
+}
+
 // Collect drains up to maxBatchSize events, waiting no longer than timeout for
 // the batch to fill. yield, when non-nil, is consulted while waiting: if it
 // reports pending control work (reads, account creates, snapshot requests),

@@ -29,7 +29,7 @@ func TestEventLoopConcurrentTransfersInvariant(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rb := engine.NewRingBuffer(1 << 15)
+	rb, _ := engine.NewRingBuffer(1 << 15)
 	batcher := engine.NewBatcher(rb, 1024, 500*time.Microsecond)
 	loop := engine.NewEventLoop(batcher, am, w)
 

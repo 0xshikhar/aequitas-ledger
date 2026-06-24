@@ -10,7 +10,7 @@ import (
 )
 
 func TestRingBufferConcurrentSubmitNoLossNoDup(t *testing.T) {
-	rb := engine.NewRingBuffer(1 << 15)
+	rb, _ := engine.NewRingBuffer(1 << 15)
 	const producers = 100
 	const perProducer = 200
 	const total = producers * perProducer

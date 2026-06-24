@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"aequitas-ledger/internal/core"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -12,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"aequitas-ledger/internal/core"
 )
 
 const (

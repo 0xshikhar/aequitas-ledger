@@ -1,7 +1,6 @@
 package wal
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -354,19 +353,4 @@ func listSegmentIDs(dir string) ([]int, error) {
 	}
 	sort.Ints(ids)
 	return ids, nil
-}
-
-func encodeBatch(records []Record) ([]byte, error) {
-	if len(records) == 0 {
-		return nil, nil
-	}
-	var buf bytes.Buffer
-	for _, r := range records {
-		enc, err := EncodeRecord(r)
-		if err != nil {
-			return nil, err
-		}
-		_, _ = buf.Write(enc)
-	}
-	return buf.Bytes(), nil
 }

@@ -59,6 +59,7 @@ func (l *EventLoop) Run(ctx context.Context) {
 		l.drainControl()
 		batch := l.batcher.Collect(l.controlPending)
 		l.drainControl()
+		observability.RingBufferDepth.Set(float64(l.batcher.Depth()))
 
 		if len(batch) == 0 {
 			continue

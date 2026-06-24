@@ -1,7 +1,6 @@
 package replication
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -194,50 +193,4 @@ func (f *Follower) applyRecord(r wal.Record) error {
 	default:
 		return nil
 	}
-}
-
-func decodeTransferPayload(payload []byte) (core.Transfer, error) {
-	if len(payload) < 16+16+16+16+32+8 {
-		return core.Transfer{}, fmt.Errorf("transfer payload too short: %d", len(payload))
-	}
-
-	var tr core.Transfer
-	copy(tr.ID[:], payload[0:16])
-	copy(tr.DebitAccountID[:], payload[16:32])
-	copy(tr.CreditAccountID[:], payload[32:48])
-
-	tr.Amount = core.Uint128{
-		Hi: binary.BigEndian.Uint64(payload[48:56]),
-		Lo: binary.BigEndian.Uint64(payload[56:64]),
-	}
-
-	if len(payload) >= 96 {
-		copy(tr.IdempotencyKey[:], payload[64:96])
-	}
-	if len(payload) >= 104 {
-		tr.Timestamp = int64(binary.BigEndian.Uint64(payload[96:104]))
-	}
-
-	return tr, nil
-}
-
-type dummyWriter struct{}
-
-func (dummyWriter) Write(p []byte) (n int, err error) {
-	return len(p), nil
-}
-
-func encodeTransfer(t core.Transfer) []byte {
-	buf := new(bytes.Buffer)
-	buf.Write(t.ID[:])
-	buf.Write(t.DebitAccountID[:])
-	buf.Write(t.CreditAccountID[:])
-	var b8 [8]byte
-	binary.BigEndian.PutUint64(b8[:], t.Amount.Hi)
-	buf.Write(b8[:])
-	binary.BigEndian.PutUint64(b8[:], t.Amount.Lo)
-	buf.Write(b8[:])
-	buf.Write(t.IdempotencyKey[:])
-	binary.BigEndian.PutUint64(b8[:], uint64(t.Timestamp))
-	return buf.Bytes()
 }

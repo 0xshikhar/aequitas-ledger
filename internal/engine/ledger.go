@@ -90,8 +90,13 @@ func NewLedger(cfg Config, w *wal.WAL) (*Ledger, error) {
 		}
 	}
 
+	rb, err := NewRingBuffer(cfg.RingBufferSize)
+	if err != nil {
+		return nil, fmt.Errorf("invalid engine config: %w", err)
+	}
+
 	l := &Ledger{
-		rb:          NewRingBuffer(cfg.RingBufferSize),
+		rb:          rb,
 		idempKey:    NewIdempotencyStore(cfg.IdempotencyMaxSize, cfg.IdempotencyTTL),
 		accounts:    accounts,
 		wal:         w,

@@ -19,9 +19,12 @@ type RingBuffer struct {
 	tailShared atomic.Uint64 // producer-visible tail snapshot
 }
 
-func NewRingBuffer(size int) *RingBuffer {
+// NewRingBuffer creates a ring buffer. size must be a power of two and > 0 —
+// the mask-based indexing depends on it — and invalid sizes return an error
+// rather than panicking, so callers can fail fast with a clean message.
+func NewRingBuffer(size int) (*RingBuffer, error) {
 	if size <= 0 || (size&(size-1)) != 0 {
-		panic("ring buffer size must be power of 2 and > 0")
+		return nil, core.ErrInvalidRingBufferSize{Size: size}
 	}
 	rb := &RingBuffer{
 		buf:   make([]TransferEvent, size),
@@ -30,7 +33,7 @@ func NewRingBuffer(size int) *RingBuffer {
 		cap:   uint64(size),
 	}
 	rb.tailShared.Store(0)
-	return rb
+	return rb, nil
 }
 
 func (rb *RingBuffer) Submit(ev TransferEvent) error {
