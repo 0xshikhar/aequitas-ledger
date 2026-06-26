@@ -43,13 +43,13 @@ func TestTransfersBatchInterleavedValidityAndOrdering(t *testing.T) {
 	bb, _ := am.Get(b)
 	cc, _ := am.Get(c)
 
-	if got := core.String(core.Balance(*aa)); got != "20" {
+	if got := core.String(balanceOf(t, *aa)); got != "20" {
 		t.Fatalf("unexpected A balance: %s", got)
 	}
-	if got := core.String(core.Balance(*bb)); got != "80" {
+	if got := core.String(balanceOf(t, *bb)); got != "80" {
 		t.Fatalf("unexpected B balance: %s", got)
 	}
-	if got := core.String(core.Balance(*cc)); got != "0" {
+	if got := core.String(balanceOf(t, *cc)); got != "0" {
 		t.Fatalf("unexpected C balance: %s", got)
 	}
 }

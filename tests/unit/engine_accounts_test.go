@@ -31,7 +31,7 @@ func TestAccountManagerBalanceInvariant(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected underflow in expected balance: %v", err)
 		}
-		if core.Cmp(core.Balance(*a), expected) != 0 {
+		if core.Cmp(balanceOf(t, *a), expected) != 0 {
 			t.Fatalf("balance invariant broken at i=%d", i)
 		}
 	}

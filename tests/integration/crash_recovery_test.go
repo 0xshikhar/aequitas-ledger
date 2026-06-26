@@ -124,7 +124,7 @@ func TestCrashRecovery(t *testing.T) {
 
 	for _, initialAcc := range cfg.InitialAccounts {
 		var errAdd error
-		sumInitialBalance, errAdd = core.Add(sumInitialBalance, core.Balance(initialAcc))
+		sumInitialBalance, errAdd = core.Add(sumInitialBalance, balanceOf(t, initialAcc))
 		if errAdd != nil {
 			t.Fatalf("unexpected sumInitialBalance add error: %v", errAdd)
 		}
@@ -133,7 +133,7 @@ func TestCrashRecovery(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get recovered account %v: %v", initialAcc.ID, err)
 		}
-		recBalance := core.Balance(recoveredAcc)
+		recBalance := balanceOf(t, recoveredAcc)
 		sumRecoveredBalance, errAdd = core.Add(sumRecoveredBalance, recBalance)
 		if errAdd != nil {
 			t.Fatalf("unexpected sumRecoveredBalance add error: %v", errAdd)

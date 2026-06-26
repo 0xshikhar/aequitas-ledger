@@ -60,10 +60,10 @@ func TestLedgerCreateTransferFullPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b := core.String(core.Balance(accDebit)); b != "889" {
+	if b := core.String(balanceOf(t, accDebit)); b != "889" {
 		t.Fatalf("unexpected debit balance: %s", b)
 	}
-	if b := core.String(core.Balance(accCredit)); b != "111" {
+	if b := core.String(balanceOf(t, accCredit)); b != "111" {
 		t.Fatalf("unexpected credit balance: %s", b)
 	}
 }

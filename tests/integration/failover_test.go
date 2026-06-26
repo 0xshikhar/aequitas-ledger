@@ -91,8 +91,8 @@ func TestReplicaFailoverPromotion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get account 1: %v", err)
 	}
-	if core.String(core.Balance(acc1State)) != "3500" {
-		t.Errorf("expected account 1 balance '3500', got '%s'", core.String(core.Balance(acc1State)))
+	if core.String(balanceOf(t, acc1State)) != "3500" {
+		t.Errorf("expected account 1 balance '3500', got '%s'", core.String(balanceOf(t, acc1State)))
 	}
 
 	// Acc 2: 0 + 1000 + 500 = 1500
@@ -100,7 +100,7 @@ func TestReplicaFailoverPromotion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get account 2: %v", err)
 	}
-	if core.String(core.Balance(acc2State)) != "1500" {
-		t.Errorf("expected account 2 balance '1500', got '%s'", core.String(core.Balance(acc2State)))
+	if core.String(balanceOf(t, acc2State)) != "1500" {
+		t.Errorf("expected account 2 balance '1500', got '%s'", core.String(balanceOf(t, acc2State)))
 	}
 }

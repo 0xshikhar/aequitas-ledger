@@ -75,10 +75,10 @@ func TestIdempotencyConcurrentSameKeySameResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := core.String(core.Balance(accDebit)); got != "7" {
+	if got := core.String(balanceOf(t, accDebit)); got != "7" {
 		t.Fatalf("unexpected debit account balance: %s", got)
 	}
-	if got := core.String(core.Balance(accCredit)); got != "3" {
+	if got := core.String(balanceOf(t, accCredit)); got != "3" {
 		t.Fatalf("unexpected credit account balance: %s", got)
 	}
 }

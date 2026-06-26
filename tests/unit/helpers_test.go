@@ -20,3 +20,12 @@ func mustCreate(t *testing.T, am *engine.AccountManager, a core.Account) {
 		t.Fatalf("create account failed: %v", err)
 	}
 }
+
+// balanceOf asserts the account's invariant holds and returns its balance.
+func balanceOf(t testing.TB, a core.Account) core.Uint128 {
+	bal, err := core.Balance(a)
+	if err != nil {
+		t.Fatalf("invariant violation: %v", err)
+	}
+	return bal
+}

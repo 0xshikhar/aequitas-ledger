@@ -71,7 +71,7 @@ func TestReplicationPrimaryToFollower(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get account 1 on follower: %v", err)
 	}
-	bal1 := core.Balance(followerAcc1)
+	bal1 := balanceOf(t, followerAcc1)
 	if core.String(bal1) != "9700" {
 		t.Errorf("expected follower account 1 balance 9700, got %s", core.String(bal1))
 	}
@@ -80,7 +80,7 @@ func TestReplicationPrimaryToFollower(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get account 2 on follower: %v", err)
 	}
-	bal2 := core.Balance(followerAcc2)
+	bal2 := balanceOf(t, followerAcc2)
 	if core.String(bal2) != "300" {
 		t.Errorf("expected follower account 2 balance 300, got %s", core.String(bal2))
 	}
@@ -89,7 +89,7 @@ func TestReplicationPrimaryToFollower(t *testing.T) {
 	followerAccs := follower.Accounts()
 	var totalSystemBalance core.Uint128
 	for _, a := range followerAccs {
-		totalSystemBalance, _ = core.Add(totalSystemBalance, core.Balance(a))
+		totalSystemBalance, _ = core.Add(totalSystemBalance, balanceOf(t, a))
 	}
 	if core.String(totalSystemBalance) != "10000" {
 		t.Errorf("follower balance conservation violated! system balance=%s, expected=10000", core.String(totalSystemBalance))

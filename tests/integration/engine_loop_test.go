@@ -99,10 +99,10 @@ func TestEventLoopConcurrentTransfersInvariant(t *testing.T) {
 
 	debitAcc, _ := am.Get(debitID)
 	creditAcc, _ := am.Get(creditID)
-	if got := core.String(core.Balance(*debitAcc)); got != "10000" {
+	if got := core.String(balanceOf(t, *debitAcc)); got != "10000" {
 		t.Fatalf("unexpected debit balance: %s", got)
 	}
-	if got := core.String(core.Balance(*creditAcc)); got != "10000" {
+	if got := core.String(balanceOf(t, *creditAcc)); got != "10000" {
 		t.Fatalf("unexpected credit balance: %s", got)
 	}
 
