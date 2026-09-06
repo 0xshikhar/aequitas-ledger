@@ -2,7 +2,7 @@
 
 A high-throughput, crash-safe, double-entry financial ledger built in Go — inspired by TigerBeetle's single-writer event loop architecture.
 
-**Target:** 200k–500k TPS on commodity NVMe  
+**Target:** 200k–500k TPS on commodity NVMe (design target; **measured: ~269k TPS** sustained with batch-8192 RPCs on Apple M4 Pro, and ~211 TPS unary — see docs/benchmark_report.md and docs/learning/12-batched-api.md)  
 **Guarantee:** Strict double-entry invariant survives crashes and WAL replay  
 **Signal:** Staff/principal-level systems design portfolio project
 

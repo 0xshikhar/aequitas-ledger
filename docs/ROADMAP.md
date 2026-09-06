@@ -204,22 +204,17 @@
 - **Proof:** `kustomize build` / `kubectl apply` against the manifests results in both pods having a WAL volume; a follower-pod restart does not lose replication state.
 
 ### C0.10 — Housekeeping / dead code / hygiene
-- **Status:** ⬜ Not started
-- **Status:** ⬜ Not started
-- **Problem:** Dead and unrelated code erodes reviewer trust faster than missing features.
-- **Items (each a single commit):**
-  1. **Remove `cmd/ledger-cli/rpc-test` and `golang.org/x/net/websocket`.** The `rpc-test` command (`cmd/ledger-cli/main.go:63-65,72-147`) hits a hardcoded third-party endpoint. Strip it; drop the `websocket` import; `go mod tidy`.
-  2. **Delete dead code:**
-     - `internal/wal/wal.go:290-303` — `encodeBatch` (superseded by `AppendBatch`).
-     - `internal/replication/follower.go:199-243` — `decodeTransferPayload` (duplicate of `engine.DecodeTransferPayload`), `encodeTransfer`, and `dummyWriter` (unreferenced).
-     - `internal/core/errors.go:74-78` — `ErrDuplicateTransferID` (defined, never produced, never checked; either enforce it in `ApplyBatch` by checking a transfer-ID index, or delete).
-     - `internal/observability/metrics.go:49-56` — `RingBufferDepth` gauge: either set it in the loop on every batch (`observability.RingBufferDepth.Set(float64(l.rb.Len()))`) or delete it.
-     - `internal/events/publisher.go` — `Publisher`: wire the engine to publish on each committed batch (outbox is the natural seam; see T3.4) or delete.
-  3. **Commit the `docs/` tree.** `git status` shows `?? docs/`. `git add docs/ && git commit -m "docs: track docs/ tree"`. Update `Status.md` to no longer say "ADRs complete and committed" *before* the commit lands, or amend afterwards.
-  4. **Fix `deploy/prometheus.yml:7`.** Targets `aequitas-ledger:6060`; compose services are `ledger-primary` and `ledger-follower`. Replace with `['ledger-primary:6060', 'ledger-follower:6060']`.
-  5. **Fix the case-sensitivity in `docker-compose.yml`.** `LEDGER_ROLE=FOLLOWER` works only because the read is case-insensitive by accident; normalize via `strings.ToLower` in `config.Load` and document.
-  6. **Update the README claims table.** `README.md:5` claims "200k–500k TPS" while the bench report measures 2,900 TPS. Add a "(design target, not yet measured — see Tier 2 / S2.4)" annotation.
-- **Proof:** `golangci-lint --disable-all --enable=unused,deadcode,gosimple ./...` clean; `git status` clean; `go mod tidy` reports no changes; `grep -RnE "panic\\(" internal/engine internal/core internal/wal internal/replication` returns nothing (C0.7 + C0.10 jointly).
+- **Status:** ✅ Done
+- **Resolution:**
+  1. **`cmd/ledger-cli/rpc-test` removed** (command, usage line, `rpcTestCmd`/`testHTTPRPC`/`testWSRPC`); `go mod tidy` dropped `golang.org/x/net` from the module graph.
+  2. **Dead code deleted:** `wal.encodeBatch` (+ the now-unused `bytes` import), `replication/follower.go`'s `decodeTransferPayload`/`encodeTransfer`/`dummyWriter`, `core.ErrDuplicateTransferID` (never produced or checked; a transfer-ID uniqueness index remains a D1.5-adjacent design decision), and the entire unreferenced `internal/events` package (a real outbox publisher, if wanted, is future work with T3.4's auditor as the natural seam).
+  3. **`RingBufferDepth` is now set** — `Batcher.Depth()` (honest approximation, documented as such) sampled by the event loop each iteration — rather than deleted, since it answers a real question.
+  4. **`NewRingBuffer` returns an error** instead of panicking (C0.7 item 3, pulled forward because the CI panic grep gate needs it); `NewLedger` surfaces it as config validation.
+  5. **`docs/` tree committed** (ADRs, benchmark report, roadmap, learning series).
+  6. **`deploy/prometheus.yml`** now scrapes `ledger-primary:6060` and `ledger-follower:6060` (the compose service names).
+  7. **`LEDGER_ROLE` normalized** via `strings.ToLower(strings.TrimSpace(...))` in `config.Load` — this was a real deployment bug: docker-compose's `LEDGER_ROLE=FOLLOWER` never matched the lowercase comparison in `cmd/server`, so the "follower" booted as a second primary.
+  8. **README claim annotated** with measured numbers (~269k TPS batched / ~211 TPS unary) instead of the bare design target.
+- **Proof:** `gofmt -l .` clean; `go vet ./...` clean; `go mod tidy` produces no diff; `make panic-gate` passes (only the allowlisted invariant panic in `core/account.go` remains — C0.7 debt); full suite green under `-race`.
 
 ---
 
@@ -264,14 +259,10 @@ These are what make TigerBeetle a *financial* database rather than a fast KV wit
 These are what make TigerBeetle a *financial* database rather than a fast KV with balances. D1.1 is the single biggest TPS lever; without it, Tier 2 is noise.
 
 ### D1.1 — Batched request/response protocol *(single biggest TPS lever)*
-- Replace unary `CreateTransfer` with `CreateTransfers([]Transfer) -> []Result` (batch up to ~1K–8K items per RPC), same for accounts. Eliminates per-transfer `chan error` allocation (C0.15 becomes moot), amortizes API overhead, and is how TigerBeetle hits its throughput.
-- Internals: one submit, one result slice, one completion notification per batch. The proto already has `repeated` for most fields, so this is a *handler* refactor more than a schema change.
-- REST equivalent: accept arrays. Per-item status; batch accepted atomically at the protocol level (mirrors TigerBeetle).
-- **Proof:** Bench: batch-8192 RPC ≥ 25× unary TPS; allocs/op on submit path near zero. Capture pprof before/after.
-- Replace unary `CreateTransfer` with `CreateTransfers([]Transfer) -> []Result` (batch up to ~1K–8K items per RPC), same for accounts. Eliminates per-transfer `chan error` allocation (C0.15 becomes moot), amortizes API overhead, and is how TigerBeetle hits its throughput.
-- Internals: one submit, one result slice, one completion notification per batch. The proto already has `repeated` for most fields, so this is a *handler* refactor more than a schema change.
-- REST equivalent: accept arrays. Per-item status; batch accepted atomically at the protocol level (mirrors TigerBeetle).
-- **Proof:** Bench: batch-8192 RPC ≥ 25× unary TPS; allocs/op on submit path near zero. Capture pprof before/after.
+- **Status:** ✅ Done
+- **Resolution:** Engine-level `Ledger.CreateTransfers([]Transfer) -> []TransferOutcome` (cap 8192) and `Ledger.CreateAccounts` (cap 8192; one WAL append + one sync per batch — previously N fsyncs). Batched events ride the existing ring buffer and drain path (no new queue), sharing one `batchState`: one result slice, one atomic countdown, one `sync.Once`-guarded close — zero per-transfer channels. Acks now carry the committed `Transfer` (`TransferAck`), so callers observe server-assigned timestamps and idempotency commits match what recovery decodes. Documented semantics: pre-submit cancellation rolls back cleanly; post-submission the batch runs to completion (TigerBeetle-style); ledger shutdown completes queued work via `abandonPending` and reports `ErrLedgerClosed` for the never-queued tail. A within-batch duplicate idempotency key fails that item fast instead of deadlocking on its own batch's commit (found by the integration test hanging under `-timeout`).
+- **Surfaces:** gRPC `CreateTransfers`/`CreateAccounts` RPCs (proto regenerated) with per-item `ok/transfer/error` results; REST `POST /v1/transfers/batch` and `/v1/accounts/batch` with per-item status inside HTTP 200. Shared `transferErrorStatus` keeps unary and batch error mapping identical.
+- **Proof (Apple M4 Pro):** gRPC unary 4.73 ms/RPC (one transfer) ≈ 211 TPS vs batch-8192 30.5 ms/RPC ≈ 268,700 TPS → **~1,270×** (target was ≥25×). Engine-level batch-8192: 24,650 allocs per 8192-transfer batch ≈ **3 allocs/transfer, down from 7 unary** — the engine's own orchestration is 0.017% of batch-run allocations; the remaining 3/transfer are WAL record encode + idempotency map insert (S2.1 scope). pprof before/after in `docs/learning/assets/d11-pprof-*.txt`: unary CPU dominated by per-RPC park/unwake; batch CPU dominated by the fsync syscall. Full suite green under `-race`.
 
 ### D1.2 — Two-phase transfers (pending → post/void)
 - Add `PendingDebits/PendingCredits` to accounts (proto already reserves these fields), `timeout` on transfers, and `post_pending_transfer` / `void_pending_transfer` flags. Models holds/authorizations — the reason payment systems look the way they do.
@@ -405,9 +396,8 @@ This is TigerBeetle's actual crown jewel (VOPR). A Go-scale version is very achi
 
 ## Tier 5 — Production hardening & engineering process
 
-- **P5.1 CI (GitHub Actions):** build + vet + `golangci-lint` + `test -race` + coverage report + docker build + bench smoke (assert no >10% regression on a fixed workload). Hours of work, pays for itself immediately. Required to enforce T3.5.
-- **P5.1 CI (GitHub Actions):** build + vet + `golangci-lint` + `test -race` + coverage report + docker build + bench smoke (assert no >10% regression on a fixed workload). Hours of work, pays for itself immediately. Required to enforce T3.5.
-- **P5.2 Makefile + lint config:** `make proto lint test race bench cover docker`; import ordering, error-wrapping conventions.
+- **P5.1 CI (GitHub Actions):** ✅ Done — `.github/workflows/ci.yml` with four jobs: (1) build + vet + gofmt + **panic grep gate** + `test -race` with coverage artifact, (2) golangci-lint (`golangci-lint-action@v8`, minimal `.golangci.yml`: govet/staticcheck/unused/ineffassign), (3) 10s fuzz smoke on both decoders, (4) bench smoke via `scripts/bench_smoke.sh`. The smoke gate asserts generous floors (unary < 25 ms/op, batch-8192 < 150 ms/op — 3–5× headroom over measured values) so shared runners don't flake: it catches orders-of-magnitude collapses, while percentage-level regression gating needs dedicated hardware and benchstat baselines (S2.4).
+- **P5.2 Makefile + lint config:** ✅ Done — `Makefile` with `proto-gen build vet fmt lint test race cover bench bench-smoke panic-gate tidy check` targets (`make check` = the CI test-job contents); `.golangci.yml` opt-in linter set (extend deliberately, every linter must pass the whole tree).
 - **P5.3 Security (current Phase 14):** TLS/mTLS for gRPC + replication listener (replication is currently plaintext TCP — it carries financial data), HMAC/client auth, token-bucket rate limiting per API key. The replication listener is more urgent than the public API.
 - **P5.4 Lifecycle:** config validation at startup (fail fast on bad env), graceful drain (stop accepting, flush batch, final sync, stop replication), readiness = recovered + (if follower) caught-up; k8s probes wired to that. C0.5 readiness hook lives here.
 - **P5.5 Deploy reality pass:** make docker-compose actually run primary+follower end-to-end (C0.9 ✅), fix follower WAL volume (C0.9 gap), fix Prometheus targets (C0.10.4), add Grafana dashboard JSON for the metrics that exist (transfer rate, batch size, sync latency, queue depth, lag).
@@ -495,3 +485,6 @@ By end of week 2: `go test -race ./...` in CI, `golangci-lint` clean, no `panic(
 
 - **2026-09-03:** initial roadmap.
 - **2026-09-04:** rewritten to reflect post-commit state. Six Tier-0 items closed (C0.1, C0.2, C0.3, C0.4, C0.6, C0.9). Four still open (C0.5, C0.7, C0.8, C0.10). Six newly-surfaced items added: C0.11–C0.16 (REST error mapping, REST ID aliasing, double-recover, full-segment read on truncate, channel-allocation pressure, batcher unfairness). Tier 5 expanded with P5.9 (livez/readyz split). Execution plan extended with a two-week concrete shape.
+- **2026-09-06:** C0.11–C0.16 closed with proof tests; two further defects surfaced and fixed (C0.17 rotation-straddling batch data loss; C0.18 zero-key idempotency collapse). `go test -race ./...` clean. Measured: GetAccount 1,001,850 ns/op → 608 ns/op (0 allocs), read p50 under 16-writer load 21.9 µs.
+- **2026-09-06 (later):** **D1.1 implemented — the batched request/response protocol.** Engine `CreateTransfers`/`CreateAccounts` with a shared `batchState` completion, `TransferAck` carrying committed transfers, and shutdown-safe cancellation semantics; gRPC batch RPCs (proto regenerated) and REST batch endpoints with per-item status. Proof: gRPC unary ~211 TPS vs batch-8192 ~268,700 TPS (**~1,270×**, target ≥25×); per-transfer allocations 7 → 3 (engine orchestration 0.017% of batch allocations; remainder is WAL encode — S2.1). pprof before/after in `docs/learning/assets/`. Deep-dive: `docs/learning/12-batched-api.md`.
+- **2026-09-06 (C0.10 + P5.1/P5.2):** Housekeeping and CI/Makefile closed. Removed `rpc-test` + the `x/net` dependency; deleted dead code (`encodeBatch`, replication decoders/`dummyWriter`, `ErrDuplicateTransferID`, the unreferenced `internal/events` package); `RingBufferDepth` now set via `Batcher.Depth()`; `NewRingBuffer` returns an error instead of panicking (C0.7 item 3 pulled forward for the panic gate); docs tree committed; Prometheus scrape targets fixed; `LEDGER_ROLE` case-normalized in `config.Load` — fixing a real deployment bug where the compose follower booted as a second primary; README claim annotated with measured numbers. CI: four-job workflow (race+coverage, golangci-lint, fuzz smoke, bench smoke with generous floors) plus a panic grep gate; Makefile mirrors it (`make check`). Remaining open in Tier 0: C0.5 (background checkpointer — unbounded WAL growth until wired), C0.7 (Balance panic policy), C0.8 (replication hardening, now urgent since the batched API commits 8k-record batches the follower fsyncs one record at a time).

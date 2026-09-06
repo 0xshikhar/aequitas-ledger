@@ -1,0 +1,19 @@
+File: d11_batch.test
+Type: alloc_objects
+Time: 2026-09-06 17:01:03 IST
+Showing nodes accounting for 61973782, 99.63% of 62206269 total
+Dropped 133 nodes (cum <= 311031)
+Showing top 12 nodes out of 43
+      flat  flat%   sum%        cum   cum%
+  19136873 30.76% 30.76%   19136873 30.76%  google.golang.org/protobuf/internal/impl.consumeBytesNoZero
+  11815674 18.99% 49.76%   11815674 18.99%  reflect.unsafe_New
+   9409954 15.13% 64.88%    9409954 15.13%  aequitas-ledger/tests/integration.makeTransfer (inline)
+   4831065  7.77% 72.65%   11929583 19.18%  aequitas-ledger/internal/api.(*AccountsHandler).CreateTransfers
+   4714189  7.58% 80.23%    4714189  7.58%  aequitas-ledger/internal/api.coreTransferToProto (inline)
+   4653406  7.48% 87.71%   30605959 49.20%  aequitas-ledger/tests/integration.BenchmarkGRPCBatchCreateTransfers8192
+   2511154  4.04% 91.75%    2511154  4.04%  aequitas-ledger/internal/wal.EncodeRecord
+   2495315  4.01% 95.76%    2495315  4.01%  aequitas-ledger/internal/core.EncodeTransferPayload
+   2373650  3.82% 99.57%    2373650  3.82%  aequitas-ledger/internal/engine.(*IdempotencyStore).CheckAndReserve
+     21845 0.035% 99.61%   26445779 42.51%  aequitas-ledger/proto/ledger/v1._LedgerService_CreateTransfers_Handler
+     10382 0.017% 99.63%    2384329  3.83%  aequitas-ledger/internal/engine.(*Ledger).CreateTransfers
+       275 0.00044% 99.63%    2495590  4.01%  aequitas-ledger/internal/engine.makeWALRecords
